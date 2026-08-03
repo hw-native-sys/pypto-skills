@@ -8,6 +8,14 @@ description: Use when drafting, checking, or filing a GitHub issue, including bu
 Draft and create one issue against the repository proven by the current Git
 checkout. Keep discovery read-only and make the exact approved payload immutable.
 
+## Resolve repository policy
+
+Read the authoritative [repository policy](../../lib/repository/policy.md) first.
+Discover all applicable repository instructions for the checkout and issue
+workflow before choosing issue behavior, metadata, or follow-up mutations. Stop
+on missing or conflicting required policy and show the evidence; do not replace
+it with source-repository conventions or GitHub defaults.
+
 ## Resolve issue context
 
 Read [issue context](../../lib/github/issue-context.md) and invoke the

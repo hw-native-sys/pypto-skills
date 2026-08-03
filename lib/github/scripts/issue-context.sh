@@ -58,7 +58,8 @@ url_identity() {
 
 response_identity() {
   local expected_host=$1 expected_repo=$2 response=$3
-  local full_name html_url response_host is_fork issue_repo parent_url parent_host
+  local full_name html_url response_host response_repo is_fork issue_repo
+  local parent_url parent_host parent_repo
   full_name=$(printf '%s' "$response" | jq -er '.full_name | strings | select(length > 0)') ||
     fail "repository response has no valid full_name"
   validate_repo "$full_name" || fail "repository response has invalid full_name"
@@ -67,10 +68,12 @@ response_identity() {
   fi
   html_url=$(printf '%s' "$response" | jq -er '.html_url | strings | select(length > 0)') ||
     fail "repository response has no valid html_url"
-  read -r response_host _ < <(url_identity "$html_url") ||
+  IFS=$'\t' read -r response_host response_repo < <(url_identity "$html_url") ||
     fail "repository response has an invalid html_url"
   [ "$response_host" = "$expected_host" ] ||
     fail "repository response host does not match $expected_host"
+  [[ "${response_repo,,}" = "${full_name,,}" ]] ||
+    fail "repository response html_url does not match $full_name"
 
   is_fork=$(printf '%s' "$response" |
     jq -er '.fork | if type == "boolean" then tostring else error("invalid fork") end') ||
@@ -84,10 +87,12 @@ response_identity() {
     parent_url=$(printf '%s' "$response" |
       jq -er '.parent.html_url | strings | select(length > 0)') ||
       fail "fork response has no valid parent html_url"
-    read -r parent_host _ < <(url_identity "$parent_url") ||
+    IFS=$'\t' read -r parent_host parent_repo < <(url_identity "$parent_url") ||
       fail "fork response has an invalid parent html_url"
     [ "$parent_host" = "$expected_host" ] ||
       fail "fork parent host does not match $expected_host"
+    [[ "${parent_repo,,}" = "${issue_repo,,}" ]] ||
+      fail "fork parent html_url does not match $issue_repo"
   fi
   printf '%s\t%s\t%s\n' "$full_name" "$issue_repo" "$is_fork"
 }
@@ -98,7 +103,7 @@ repository_context() {
   local github_host="" candidate metadata local_repo="" issue_repo=""
   local fork_local="" nonfork_local=""
   local candidate_local candidate_issue candidate_is_fork target_metadata
-  local default_branch target_full target_url target_host
+  local default_branch target_full target_url target_host target_repo
   declare -A candidates=()
 
   git rev-parse --show-toplevel >/dev/null 2>&1 ||
@@ -157,10 +162,12 @@ repository_context() {
   target_url=$(printf '%s' "$target_metadata" |
     jq -er '.html_url | strings | select(length > 0)') ||
     fail "issue repository response has no valid html_url"
-  read -r target_host _ < <(url_identity "$target_url") ||
+  IFS=$'\t' read -r target_host target_repo < <(url_identity "$target_url") ||
     fail "issue repository response has an invalid html_url"
   [ "$target_host" = "$github_host" ] ||
     fail "issue repository response host does not match $github_host"
+  [[ "${target_repo,,}" = "${target_full,,}" ]] ||
+    fail "issue repository html_url does not match $target_full"
   default_branch=$(printf '%s' "$target_metadata" |
     jq -er '.default_branch | strings | select(length > 0)') ||
     fail "issue repository has no valid default branch"

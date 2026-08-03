@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -19,6 +20,8 @@ SKILL = ROOT / "skills/create-issue/SKILL.md"
 class GHCall(TypedDict):
     argv: list[str]
     host: str
+    body: str
+    body_file: str
 
 
 class CreateIssueBehaviorTests(unittest.TestCase):
@@ -53,11 +56,16 @@ class CreateIssueBehaviorTests(unittest.TestCase):
         self.bin_path = self.temp_path / "bin"
         self.bin_path.mkdir()
         self.write_fake_gh()
+        self.write_fake_git()
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        assert real_git is not None
         self.environment = os.environ.copy()
         self.environment.update(
             {
                 "PATH": f"{self.bin_path}{os.pathsep}{self.environment['PATH']}",
                 "GH_TRANSCRIPT": str(self.transcript_path),
+                "TEST_REAL_GIT": real_git,
             }
         )
         self.body_file = self.temp_path / "issue.md"
@@ -93,8 +101,19 @@ import os
 import sys
 
 argv = sys.argv[1:]
+body = ""
+body_file = ""
+if argv[:2] == ["issue", "create"]:
+    body_file = argv[argv.index("--body-file") + 1]
+    with open(body_file, encoding="utf-8") as approved_body:
+        body = approved_body.read()
 with open(os.environ["GH_TRANSCRIPT"], "a", encoding="utf-8") as transcript:
-    transcript.write(json.dumps({"argv": argv, "host": os.environ.get("GH_HOST", "")}) + "\\n")
+    transcript.write(json.dumps({
+        "argv": argv,
+        "host": os.environ.get("GH_HOST", ""),
+        "body": body,
+        "body_file": body_file,
+    }) + "\\n")
 
 if argv[:2] == ["issue", "list"]:
     print(json.dumps([
@@ -144,11 +163,14 @@ elif argv and argv[0] == "api":
         if os.environ.get("GH_REPO_FAILURE") == "1":
             sys.stderr.write("gh: repository not found (HTTP 404)\\n")
             raise SystemExit(1)
+        html_url = "https://ghe.example.test/acme/widget"
+        if os.environ.get("GH_CONTRADICTORY_URL") == "1":
+            html_url = "https://ghe.example.test/attacker/widget"
         print(json.dumps({
             "full_name": "acme/widget",
             "fork": False,
             "default_branch": "trunk",
-            "html_url": "https://ghe.example.test/acme/widget",
+            "html_url": html_url,
         }))
     else:
         sys.stderr.write(f"unexpected api endpoint: {endpoint}\\n")
@@ -162,6 +184,34 @@ else:
             encoding="utf-8",
         )
         fake_gh.chmod(0o755)
+
+    def write_fake_git(self) -> None:
+        fake_git = self.bin_path / "git"
+        fake_git.write_text(
+            """#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+real_git = os.environ["TEST_REAL_GIT"]
+argv = sys.argv[1:]
+if argv and argv[0] == "hash-object" and os.environ.get("RACE_BODY_FILE"):
+    result = subprocess.run(
+        [real_git, *argv],
+        input=sys.stdin.buffer.read(),
+        check=False,
+        capture_output=True,
+    )
+    with open(os.environ["RACE_BODY_FILE"], "w", encoding="utf-8") as body:
+        body.write(os.environ["RACE_REPLACEMENT"])
+    sys.stdout.buffer.write(result.stdout)
+    sys.stderr.buffer.write(result.stderr)
+    raise SystemExit(result.returncode)
+os.execv(real_git, [real_git, *argv])
+""",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
 
     def transcript(self) -> list[GHCall]:
         if not self.transcript_path.exists():
@@ -313,6 +363,14 @@ else:
             json.loads(result.stdout),
         )
 
+    def test_repository_context_rejects_full_name_url_repository_conflict(self) -> None:
+        self.environment["GH_CONTRADICTORY_URL"] = "1"
+
+        result = self.context("repository")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("does not match", result.stderr)
+
     def test_template_discovery_is_host_pinned_and_lists_forms_and_legacy(self) -> None:
         result = self.context("templates", "ghe.example.test", "acme/widget")
 
@@ -403,6 +461,19 @@ else:
         self.assertIn("Labels: bug, regression", result.stdout)
         self.assertEqual([], self.transcript())
 
+    def test_preview_displays_snapshot_when_source_changes_after_hash(self) -> None:
+        approved_body = self.body_file.read_text(encoding="utf-8")
+        replacement = "MUTATED AFTER PREVIEW SNAPSHOT\n"
+        self.environment["RACE_BODY_FILE"] = str(self.body_file)
+        self.environment["RACE_REPLACEMENT"] = replacement
+
+        result = self.issue_create("preview", self.body_file, "bug")
+
+        self.assertEqual(replacement, self.body_file.read_text(encoding="utf-8"))
+        self.assertIn(approved_body, result.stdout)
+        self.assertNotIn(replacement, result.stdout)
+        self.assertEqual([], self.transcript())
+
     def test_create_rejects_changed_payload_before_gh_write(self) -> None:
         token = self.preview_token("bug")
         self.body_file.write_text("changed after approval\n", encoding="utf-8")
@@ -415,6 +486,7 @@ else:
     def test_successful_create_uses_exact_confirmed_payload_without_project_call(
         self,
     ) -> None:
+        approved_body = self.body_file.read_text(encoding="utf-8")
         token = self.preview_token("bug", "regression")
         result = self.issue_create(
             "create", self.body_file, "bug", "regression", token=token
@@ -423,31 +495,64 @@ else:
         self.assertEqual(
             "https://ghe.example.test/acme/widget/issues/42", result.stdout.strip()
         )
+        calls = self.transcript()
+        self.assertEqual(1, len(calls))
+        call = calls[0]
+        snapshot_path = call["body_file"]
         self.assertEqual(
             [
-                {
-                    "argv": [
-                        "issue",
-                        "create",
-                        "--repo",
-                        "acme/widget",
-                        "--title",
-                        self.title,
-                        "--body-file",
-                        str(self.body_file),
-                        "--label",
-                        "bug",
-                        "--label",
-                        "regression",
-                    ],
-                    "host": "ghe.example.test",
-                }
+                "issue",
+                "create",
+                "--repo",
+                "acme/widget",
+                "--title",
+                self.title,
+                "--body-file",
+                snapshot_path,
+                "--label",
+                "bug",
+                "--label",
+                "regression",
             ],
-            self.transcript(),
+            call["argv"],
         )
+        self.assertEqual("ghe.example.test", call["host"])
+        self.assertEqual(approved_body, call["body"])
+        self.assertNotEqual(str(self.body_file), snapshot_path)
+        self.assertFalse(Path(snapshot_path).exists())
+
+    def test_create_publishes_snapshot_when_source_changes_after_hash(self) -> None:
+        approved_body = self.body_file.read_text(encoding="utf-8")
+        token = self.preview_token("bug")
+        replacement = "MUTATED AFTER CREATE SNAPSHOT\n"
+        self.environment["RACE_BODY_FILE"] = str(self.body_file)
+        self.environment["RACE_REPLACEMENT"] = replacement
+
+        result = self.issue_create("create", self.body_file, "bug", token=token)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(replacement, self.body_file.read_text(encoding="utf-8"))
+        calls = self.transcript()
+        self.assertEqual(1, len(calls))
+        self.assertEqual(approved_body, calls[0]["body"])
+        snapshot_path = calls[0]["body_file"]
+        self.assertNotEqual(str(self.body_file), snapshot_path)
+        self.assertFalse(Path(snapshot_path).exists())
 
 
 class CreateIssueSkillContractTests(unittest.TestCase):
+    def test_skill_resolves_repository_policy_before_issue_context(self) -> None:
+        self.assertTrue(SKILL.is_file(), f"missing skill: {SKILL}")
+        text = SKILL.read_text(encoding="utf-8")
+
+        policy = text.find("../../lib/repository/policy.md")
+        context = text.find("../../lib/github/issue-context.md")
+        self.assertGreaterEqual(policy, 0)
+        self.assertGreater(context, policy)
+        policy_block = text[policy:context]
+        self.assertIn("applicable repository instructions", policy_block)
+        self.assertIn("missing or conflicting required policy", policy_block)
+
     def test_skill_orders_complete_preview_confirmation_and_create(self) -> None:
         self.assertTrue(SKILL.is_file(), f"missing skill: {SKILL}")
         text = SKILL.read_text(encoding="utf-8")
