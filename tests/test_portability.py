@@ -303,13 +303,32 @@ class PortabilityTests(unittest.TestCase):
                 self.assertIn(link, text)
 
     def test_pull_request_skills_fit_the_portable_instruction_budget(self) -> None:
-        for relative_path in ("skills/fix-pr/SKILL.md", "skills/github-pr/SKILL.md"):
+        for relative_path in (
+            "skills/auto-pr/SKILL.md",
+            "skills/fix-pr/SKILL.md",
+            "skills/github-pr/SKILL.md",
+        ):
             path = ROOT / relative_path
             with self.subTest(path=relative_path):
                 self.assertLessEqual(
                     len(path.read_text(encoding="utf-8").splitlines()),
                     200,
                 )
+
+    def test_auto_pr_contains_no_publication_or_repair_implementation(self) -> None:
+        skill = ROOT / "skills/auto-pr/SKILL.md"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        if not skill.is_file():
+            return
+
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("../git-commit/SKILL.md", text)
+        self.assertIn("../github-pr/SKILL.md", text)
+        self.assertIn("../fix-pr/SKILL.md", text)
+        self.assertIn("../../lib/repository/policy.md", text)
+        self.assertNotRegex(text, r"(?m)^\s*(?:gh|git)\s+(?:pr|api|push|commit)\b")
+        self.assertNotIn("resolveReviewThread", text)
+        self.assertNotIn("reviewThreads", text)
 
     def test_github_pr_selects_create_branch_before_push_authority(self) -> None:
         text = (ROOT / "skills/github-pr/SKILL.md").read_text(encoding="utf-8")
