@@ -29,6 +29,8 @@ REQUIRED_GITHUB_REFERENCES = (
     ROOT / "lib/github/fetch-comments.md",
     ROOT / "lib/github/reply-and-resolve.md",
     ROOT / "lib/github/checkout-fork-branch.md",
+    ROOT / "lib/github/issue-context.md",
+    ROOT / "lib/github/issue-templates.md",
 )
 
 REQUIRED_REPOSITORY_REFERENCES = (ROOT / "lib/repository/policy.md",)
@@ -106,6 +108,8 @@ REFERENCE_INPUTS = {
     "checkout-fork-branch.md": frozenset(
         {"HEAD_REPO", "PR_HEAD_BRANCH", "PR_NUMBER", "PUSH_REMOTE", "ROLE"}
     ),
+    "issue-context.md": frozenset(),
+    "issue-templates.md": frozenset(),
 }
 
 BASH_BLOCK_RE = re.compile(r"```bash\n(.*?)```", re.DOTALL)
@@ -186,6 +190,19 @@ class PortabilityTests(unittest.TestCase):
         self.assertNotRegex(text, r"\b(?:pytest|cargo test|npm test)\b")
         self.assertNotRegex(text, r"\b(?:feat|fix|refactor|chore|docs|test)\([^)]*\):")
         self.assertNotRegex(text, r"(?m)^\s*git add (?:-A|--all|\.|\*)")
+
+    def test_create_issue_has_no_fixed_repository_or_project_policy(self) -> None:
+        skill = ROOT / "skills/create-issue/SKILL.md"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        if not skill.is_file():
+            return
+
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("../../lib/github/issue-context.md", text)
+        self.assertIn("../../lib/github/issue-templates.md", text)
+        self.assertNotRegex(text, r"(?i)project\s+#?\d+")
+        self.assertNotRegex(text, r"(?m)^\s*gh issue create\b")
+        self.assertLessEqual(len(text.splitlines()), 200)
 
     def test_setup_defines_context_contract(self) -> None:
         setup = ROOT / "lib/github/setup.md"

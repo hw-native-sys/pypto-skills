@@ -6,6 +6,7 @@ from tests.skill_assertions import SKILLS, frontmatter, markdown_links, skill_di
 
 EXPECTED_SKILLS: tuple[str, ...] = (
     "clean-branches",
+    "create-issue",
     "fix-pr",
     "git-commit",
     "github-pr",
