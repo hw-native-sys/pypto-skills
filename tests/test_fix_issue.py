@@ -37,7 +37,11 @@ class FixIssuePreflightTests(unittest.TestCase):
                 "GH_ISSUE_STATE": "OPEN",
                 "GH_ISSUE_ASSIGNEE": "maintainer",
                 "GH_PROJECT_STATUS": "",
+                "GH_PROJECT_TITLES": "",
                 "GH_LINKED_PR_STATE": "",
+                "GH_LINKED_PR_NUMBER": "31",
+                "GH_LINKED_PR_REPO": "contributor/widget",
+                "GH_LINKED_PR_BRANCH": "allocator-regression",
                 "GH_SECOND_READ_ENABLED": "0",
             }
         )
@@ -84,7 +88,11 @@ def response_value(name):
 
 assignee = response_value("ISSUE_ASSIGNEE")
 project_status = response_value("PROJECT_STATUS")
+project_titles = response_value("PROJECT_TITLES").split("|")
 linked_state = response_value("LINKED_PR_STATE")
+linked_number = int(response_value("LINKED_PR_NUMBER") or "31")
+linked_repo = response_value("LINKED_PR_REPO") or "contributor/widget"
+linked_branch = response_value("LINKED_PR_BRANCH") or "allocator-regression"
 print(json.dumps({
     "number": 27,
     "title": "Allocator regression",
@@ -94,15 +102,22 @@ print(json.dumps({
     "assignees": [{"login": assignee}] if assignee else [],
     "url": "https://ghe.example.test/acme/widget/issues/27",
     "projectItems": ([
-        {"title": f"Allocator project {index}", "status": {"name": status}}
+        {
+            "title": (
+                project_titles[index - 1]
+                if index <= len(project_titles) and project_titles[index - 1]
+                else f"Allocator project {index}"
+            ),
+            "status": {"name": status},
+        }
         for index, status in enumerate(project_status.split("|"), start=1)
     ] if project_status else []),
     "closedByPullRequestsReferences": ([{
-        "number": 31,
+        "number": linked_number,
         "state": linked_state,
-        "url": "https://ghe.example.test/acme/widget/pull/31",
-        "headRepository": {"nameWithOwner": "contributor/widget"},
-        "headRefName": "allocator-regression",
+        "url": f"https://ghe.example.test/acme/widget/pull/{linked_number}",
+        "headRepository": {"nameWithOwner": linked_repo},
+        "headRefName": linked_branch,
     }] if linked_state else []),
 }))
 """,
@@ -142,6 +157,10 @@ print(json.dumps({
         assignee: str = "",
         project_status: str = "",
         linked_pr_state: str = "",
+        project_titles: str = "",
+        linked_pr_number: str = "31",
+        linked_pr_repo: str = "contributor/widget",
+        linked_pr_branch: str = "allocator-regression",
     ) -> None:
         self.environment.update(
             {
@@ -149,6 +168,10 @@ print(json.dumps({
                 "GH_ISSUE_ASSIGNEE": assignee,
                 "GH_PROJECT_STATUS": project_status,
                 "GH_LINKED_PR_STATE": linked_pr_state,
+                "GH_PROJECT_TITLES": project_titles,
+                "GH_LINKED_PR_NUMBER": linked_pr_number,
+                "GH_LINKED_PR_REPO": linked_pr_repo,
+                "GH_LINKED_PR_BRANCH": linked_pr_branch,
             }
         )
 
@@ -159,6 +182,10 @@ print(json.dumps({
         assignee: str | None = None,
         project_status: str | None = None,
         linked_pr_state: str | None = None,
+        project_titles: str | None = None,
+        linked_pr_number: str | None = None,
+        linked_pr_repo: str | None = None,
+        linked_pr_branch: str | None = None,
     ) -> None:
         self.environment["GH_SECOND_READ_ENABLED"] = "1"
         for name, value in (
@@ -166,6 +193,10 @@ print(json.dumps({
             ("ISSUE_ASSIGNEE", assignee),
             ("PROJECT_STATUS", project_status),
             ("LINKED_PR_STATE", linked_pr_state),
+            ("PROJECT_TITLES", project_titles),
+            ("LINKED_PR_NUMBER", linked_pr_number),
+            ("LINKED_PR_REPO", linked_pr_repo),
+            ("LINKED_PR_BRANCH", linked_pr_branch),
         ):
             if value is not None:
                 self.environment[f"GH_SECOND_{name}"] = value
@@ -184,14 +215,21 @@ print(json.dumps({
     def test_closed_issue_is_not_overridden(self) -> None:
         self.configure_issue(state="CLOSED", assignee="maintainer")
 
+        initial = self.context(
+            "fix-preflight", "ghe.example.test", "acme/widget", "27", check=False
+        )
+        approved_envelope = json.dumps(
+            json.loads(initial.stdout)["approval_envelope"], separators=(",", ":")
+        )
+
         result = self.context(
             "fix-preflight",
             "ghe.example.test",
             "acme/widget",
             "27",
             "--allow-conflict",
-            "--approved-conflicts-json",
-            '["closed","assigned"]',
+            "--approved-envelope-json",
+            approved_envelope,
             check=False,
         )
 
@@ -269,9 +307,11 @@ print(json.dumps({
                 "labels",
                 "assignees",
                 "url",
+                "project_items",
                 "project_status",
                 "linked_pull_requests",
                 "conflicts",
+                "approval_envelope",
             },
             set(json.loads(result.stdout)),
         )
@@ -294,17 +334,21 @@ print(json.dumps({
             {"linked_pr_state": "OPEN"},
         )
         options = ((), ("--in-progress-status", "doing"), ())
-        approved_sets = (
-            '["assigned"]',
-            '["in_progress"]',
-            '["active_pull_request"]',
-        )
-
-        for issue, extra_options, approved_set in zip(
-            scenarios, options, approved_sets, strict=True
-        ):
+        for issue, extra_options in zip(scenarios, options, strict=True):
             with self.subTest(issue=issue):
                 self.configure_issue(**issue)
+                initial = self.context(
+                    "fix-preflight",
+                    "ghe.example.test",
+                    "acme/widget",
+                    "27",
+                    *extra_options,
+                    check=False,
+                )
+                approved_envelope = json.dumps(
+                    json.loads(initial.stdout)["approval_envelope"],
+                    separators=(",", ":"),
+                )
                 result = self.context(
                     "fix-preflight",
                     "ghe.example.test",
@@ -312,8 +356,8 @@ print(json.dumps({
                     "27",
                     *extra_options,
                     "--allow-conflict",
-                    "--approved-conflicts-json",
-                    approved_set,
+                    "--approved-envelope-json",
+                    approved_envelope,
                     check=False,
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
@@ -337,12 +381,14 @@ print(json.dumps({
         )
 
         blocked = self.context(*arguments, check=False)
-        approved_conflicts = '["assigned","in_progress","active_pull_request"]'
+        approved_envelope = json.dumps(
+            json.loads(blocked.stdout)["approval_envelope"], separators=(",", ":")
+        )
         allowed = self.context(
             *arguments,
             "--allow-conflict",
-            "--approved-conflicts-json",
-            approved_conflicts,
+            "--approved-envelope-json",
+            approved_envelope,
             check=False,
         )
 
@@ -358,6 +404,33 @@ print(json.dumps({
                 self.assertEqual([{"login": "maintainer"}], record["assignees"])
                 self.assertEqual("In Progress", record["project_status"])
                 self.assertEqual("OPEN", record["linked_pull_requests"][0]["state"])
+                envelope = record["approval_envelope"]
+                self.assertEqual(
+                    {
+                        "host": "ghe.example.test",
+                        "repository": "acme/widget",
+                        "number": 27,
+                        "state": "OPEN",
+                    },
+                    envelope["issue"],
+                )
+                self.assertEqual(
+                    ["maintainer"], envelope["evidence"]["assignee_logins"]
+                )
+                self.assertEqual(
+                    [{"title": "Allocator project 1", "status": "In Progress"}],
+                    envelope["evidence"]["in_progress_project_items"],
+                )
+                self.assertEqual(
+                    {
+                        "number": 31,
+                        "state": "OPEN",
+                        "url": "https://ghe.example.test/acme/widget/pull/31",
+                        "head_repository": "contributor/widget",
+                        "head_branch": "allocator-regression",
+                    },
+                    envelope["evidence"]["active_pull_requests"][0],
+                )
 
         calls = self.transcript()
         self.assertEqual(2, len(calls))
@@ -376,11 +449,14 @@ print(json.dumps({
         )
 
         initial = self.context(*arguments, check=False)
+        approved_envelope = json.dumps(
+            json.loads(initial.stdout)["approval_envelope"], separators=(",", ":")
+        )
         override = self.context(
             *arguments,
             "--allow-conflict",
-            "--approved-conflicts-json",
-            '["assigned"]',
+            "--approved-envelope-json",
+            approved_envelope,
             check=False,
         )
 
@@ -408,11 +484,14 @@ print(json.dumps({
         )
 
         initial = self.context(*arguments, check=False)
+        approved_envelope = json.dumps(
+            json.loads(initial.stdout)["approval_envelope"], separators=(",", ":")
+        )
         override = self.context(
             *arguments,
             "--allow-conflict",
-            "--approved-conflicts-json",
-            '[ "assigned" ]',
+            "--approved-envelope-json",
+            approved_envelope,
             check=False,
         )
 
@@ -425,35 +504,33 @@ print(json.dumps({
         self.assertTrue(all(call["host"] == "ghe.example.test" for call in calls))
         self.assertTrue(all("acme/widget" in call["argv"] for call in calls))
 
-    def test_override_rejects_invalid_approved_conflict_sets_before_read(
+    def test_override_rejects_invalid_approval_envelopes_before_read(
         self,
     ) -> None:
-        invalid_sets = (
+        invalid_envelopes = (
             "not-json",
-            '{"assigned":true}',
             "[]",
-            '["assigned","assigned"]',
-            '["unknown"]',
-            '["active_pull_request","assigned"]',
+            '{"version":1}',
+            '{"issue":{"host":"ghe.example.test"}}',
         )
 
-        for approved_set in invalid_sets:
-            with self.subTest(approved_set=approved_set):
+        for approved_envelope in invalid_envelopes:
+            with self.subTest(approved_envelope=approved_envelope):
                 result = self.context(
                     "fix-preflight",
                     "ghe.example.test",
                     "acme/widget",
                     "27",
                     "--allow-conflict",
-                    "--approved-conflicts-json",
-                    approved_set,
+                    "--approved-envelope-json",
+                    approved_envelope,
                     check=False,
                 )
                 self.assertNotEqual(0, result.returncode)
 
         self.assertEqual([], self.transcript())
 
-    def test_approved_conflicts_option_requires_override_mode(self) -> None:
+    def test_approved_envelope_option_requires_override_mode(self) -> None:
         missing_set = self.context(
             "fix-preflight",
             "ghe.example.test",
@@ -467,14 +544,126 @@ print(json.dumps({
             "ghe.example.test",
             "acme/widget",
             "27",
-            "--approved-conflicts-json",
-            '["assigned"]',
+            "--approved-envelope-json",
+            '{"version":1}',
             check=False,
         )
 
         self.assertEqual(2, missing_set.returncode)
         self.assertEqual(2, without_override.returncode)
         self.assertEqual([], self.transcript())
+
+    def test_override_rejects_same_category_assignee_replacement(self) -> None:
+        self.configure_issue(assignee="maintainer")
+        initial = self.context(
+            "fix-preflight", "ghe.example.test", "acme/widget", "27", check=False
+        )
+        envelope = json.dumps(
+            json.loads(initial.stdout)["approval_envelope"], separators=(",", ":")
+        )
+        self.configure_second_read(assignee="other-maintainer")
+
+        override = self.context(
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--allow-conflict",
+            "--approved-envelope-json",
+            envelope,
+            check=False,
+        )
+
+        self.assertEqual(21, override.returncode)
+        current = json.loads(override.stdout)["approval_envelope"]
+        self.assertEqual(["other-maintainer"], current["evidence"]["assignee_logins"])
+
+    def test_override_rejects_tampered_issue_identity(self) -> None:
+        self.configure_issue(assignee="maintainer")
+        initial = self.context(
+            "fix-preflight", "ghe.example.test", "acme/widget", "27", check=False
+        )
+        envelope = json.loads(initial.stdout)["approval_envelope"]
+        envelope["issue"]["repository"] = "other/widget"
+
+        override = self.context(
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--allow-conflict",
+            "--approved-envelope-json",
+            json.dumps(envelope, separators=(",", ":")),
+            check=False,
+        )
+
+        self.assertEqual(21, override.returncode)
+        self.assertEqual(
+            "acme/widget",
+            json.loads(override.stdout)["approval_envelope"]["issue"]["repository"],
+        )
+
+    def test_override_rejects_same_category_project_item_replacement(self) -> None:
+        self.configure_issue(project_status="Doing", project_titles="Roadmap A")
+        arguments = (
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--in-progress-status",
+            "doing",
+        )
+        initial = self.context(*arguments, check=False)
+        envelope = json.dumps(
+            json.loads(initial.stdout)["approval_envelope"], separators=(",", ":")
+        )
+        self.configure_second_read(project_titles="Roadmap B")
+
+        override = self.context(
+            *arguments,
+            "--allow-conflict",
+            "--approved-envelope-json",
+            envelope,
+            check=False,
+        )
+
+        self.assertEqual(22, override.returncode)
+        items = json.loads(override.stdout)["approval_envelope"]["evidence"][
+            "in_progress_project_items"
+        ]
+        self.assertEqual([{"title": "Roadmap B", "status": "Doing"}], items)
+
+    def test_override_rejects_same_category_active_pr_replacement(self) -> None:
+        self.configure_issue(linked_pr_state="OPEN")
+        initial = self.context(
+            "fix-preflight", "ghe.example.test", "acme/widget", "27", check=False
+        )
+        envelope = json.dumps(
+            json.loads(initial.stdout)["approval_envelope"], separators=(",", ":")
+        )
+        self.configure_second_read(
+            linked_pr_number="44",
+            linked_pr_repo="other/widget",
+            linked_pr_branch="replacement",
+        )
+
+        override = self.context(
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--allow-conflict",
+            "--approved-envelope-json",
+            envelope,
+            check=False,
+        )
+
+        self.assertEqual(23, override.returncode)
+        pull_requests = json.loads(override.stdout)["approval_envelope"]["evidence"][
+            "active_pull_requests"
+        ]
+        self.assertEqual(44, pull_requests[0]["number"])
+        self.assertEqual("other/widget", pull_requests[0]["head_repository"])
 
 
 class FixIssueSkillContractTests(unittest.TestCase):
@@ -527,8 +716,11 @@ class FixIssueSkillContractTests(unittest.TestCase):
                 self.assertIn(conflict, text)
         self.assertIn("explicit approval for each conflict", text)
         self.assertIn("only for an exact match", text)
-        self.assertIn("--approved-conflicts-json", text)
+        self.assertIn("--approved-envelope-json", text)
         self.assertIn("authoritative override read", text)
+        self.assertIn("assignee logins", text)
+        self.assertIn("project item/status", text)
+        self.assertIn("pull-request number", text)
 
 
 if __name__ == "__main__":

@@ -32,8 +32,9 @@ actual in-progress value. Capture and show the complete JSON and exit status:
 The primary exit is not the complete conflict set. Read the emitted `conflicts`
 array and enumerate every entry before asking to proceed: `closed`, `assigned`,
 `in_progress`, and `active_pull_request`. For each entry, show the matching
-assignees, configured project status, or active pull-request records from the
-same JSON. Never infer from exit `21` that assignment is the only conflict.
+assignee logins, project item/status identity, or active pull-request number,
+head repository, head branch, and state from the same JSON. Never infer from
+exit `21` that assignment is the only conflict.
 
 Do not run `--allow-conflict` merely because the user asked to fix the issue.
 Use it only after showing the complete set and receiving explicit approval for
@@ -64,25 +65,31 @@ Make the design concrete enough to approve before changing a file.
 ## Wait for approval
 
 Wait for explicit approval of the implementation design. If preflight reported
-any conflict, also require explicit approval for each conflict in the emitted
-array. Design approval alone does not resolve them. Preserve the exact approved
-array as compact JSON; do not reconstruct it from the primary exit.
+any conflict, also require explicit approval for every identity in the emitted
+`approval_envelope` and explicit approval for each conflict category. Design
+approval alone does not resolve them. Preserve the
+exact envelope as compact JSON; do not reconstruct it from the primary exit or
+from the conflict category names.
 
-Pass that array to the authoritative override read:
+Pass that canonical approval envelope to the authoritative override read:
 
 ```bash
 "$ISSUE_CONTEXT_HELPER" fix-preflight "$GITHUB_HOST" "$ISSUE_REPO" \
   "$ISSUE_NUMBER" --in-progress-status "$REPOSITORY_IN_PROGRESS_VALUE" \
-  --allow-conflict --approved-conflicts-json "$APPROVED_CONFLICTS_JSON"
+  --allow-conflict --approved-envelope-json "$APPROVED_ENVELOPE_JSON"
 ```
 
 Omit `--in-progress-status` only when policy supplied no value. The helper
-compares the newly read ordered array with the approved JSON and returns `0`
-only for an exact match whose primary conflict is `21`, `22`, or `23`. Exit
-`20`, `21`, `22`, or `23` from this read is non-success: show the authoritative
-new record and obtain fresh approval for every current conflict before another
-attempt. A changed set that became clean also fails safely rather than returning
-`0`. Stop unconditionally when `closed` is present or exit `20` is returned.
+compares the newly read canonical payload with the approved JSON and returns
+`0` only for an exact match whose primary conflict is `21`, `22`, or `23`. The
+payload binds the host/repository/issue identity, issue state, configured status,
+ordered conflict categories, assignee logins, matching project item/status
+records, and every active pull-request number/head/state. Replacing an assignee,
+project item, or active PR fails closed even when the category is unchanged.
+Exit `20`, `21`, `22`, or `23` from this read is non-success: show the
+authoritative new record and obtain fresh approval for every current identity.
+A changed set that became clean also fails safely rather than returning `0`.
+Stop unconditionally when `closed` is present or exit `20` is returned.
 
 ## Optionally claim and update status
 

@@ -60,7 +60,10 @@ confirmation. Include related references without replacing required content.
 Run `scripts/issue-create.sh preview HOST REPO TITLE BODY_FILE LABEL...`, passing
 `GITHUB_HOST` and `ISSUE_REPO`. Show the helper's output verbatim. It contains
 the host, repository, title, labels, complete body, and `ISSUE_CREATE:<oid>`
-token. The preview performs no GitHub call.
+token. Labels use a counted, byte-length-delimited list, so one label containing
+a comma cannot be confused with multiple labels. Titles and labels containing
+newlines or other control characters are rejected before preview. The preview
+performs no GitHub call.
 
 Never invent or reconstruct the preview token. A token is approval-eligible only
 when the executed helper printed it together with the exact complete preview.
@@ -77,8 +80,33 @@ confirmation. Do not combine confirmation with an earlier incomplete preview.
 ## Create exactly the approved issue
 
 After confirmation, run `scripts/issue-create.sh create HOST REPO TITLE BODY_FILE
-TOKEN LABEL...` with the unchanged values. The helper rejects changed payloads
-before invoking GitHub and returns the created issue URL. Report that URL.
+TOKEN LABEL...` with the unchanged values. Interpret its outcome marker
+conservatively:
+
+- `ISSUE_CREATE_OUTCOME:confirmed_not_created` means validation stopped before
+  the GitHub mutation was invoked.
+- `ISSUE_CREATE_OUTCOME:created_response_unvalidated` means GitHub CLI reported
+  success but its returned URL could not be validated. Treat the issue as
+  created with an unvalidated response, not as a failed creation.
+- `ISSUE_CREATE_OUTCOME:unknown` means the create request was invoked but the
+  client returned nonzero, so server-side creation cannot be disproved.
+
+For either post-write outcome, do not retry. Keep the helper's private mode-0600
+stdout/stderr captures local and do not print or share raw response bytes. First
+perform host- and repository-pinned read-only verification, for example:
+
+```bash
+GH_HOST="$GITHUB_HOST" gh issue list --repo "$ISSUE_REPO" --state all \
+  --limit 100 --search "$EXACT_TITLE" \
+  --json number,title,body,labels,url
+```
+
+Compare candidate title, complete body, and labels with the approved payload.
+If a matching issue exists, report its URL and do not create another. If
+eventual consistency or incomplete evidence prevents proving absence, stop and
+recheck later or ask the user; do not retry. Only a validated absence plus fresh
+explicit approval permits another create attempt. On ordinary success, report
+the helper-validated URL.
 
 Treat project metadata as a separate optional mutation. Perform it only when
 applicable repository instructions explicitly name the project and every field

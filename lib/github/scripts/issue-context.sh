@@ -16,7 +16,7 @@ Usage:
   issue-context.sh repository
   issue-context.sh search HOST REPO QUERY
   issue-context.sh templates HOST REPO
-  issue-context.sh fix-preflight HOST REPO NUMBER [--in-progress-status STATUS] [--allow-conflict --approved-conflicts-json JSON]
+  issue-context.sh fix-preflight HOST REPO NUMBER [--in-progress-status STATUS] [--allow-conflict --approved-envelope-json JSON]
 EOF
   exit 2
 }
@@ -243,8 +243,8 @@ fix_preflight() {
   [ "$#" -ge 3 ] || usage
   local host=$1 repo=$2 number=$3
   local in_progress_status="" allow_conflict=0 response record conflict=0
-  local approved_conflicts_json="" approved_conflicts_canonical=""
-  local approved_conflicts_set=0 current_conflicts
+  local approved_envelope_json="" approved_envelope_canonical=""
+  local approved_envelope_set=0 current_envelope
   shift 3
 
   validate_host "$host" || fail "invalid GitHub host: $host"
@@ -265,11 +265,11 @@ fix_preflight() {
         allow_conflict=1
         shift
         ;;
-      --approved-conflicts-json)
+      --approved-envelope-json)
         [ "$#" -ge 2 ] || usage
-        [ "$approved_conflicts_set" -eq 0 ] || usage
-        approved_conflicts_json=$2
-        approved_conflicts_set=1
+        [ "$approved_envelope_set" -eq 0 ] || usage
+        approved_envelope_json=$2
+        approved_envelope_set=1
         shift 2
         ;;
       *) usage ;;
@@ -277,45 +277,74 @@ fix_preflight() {
   done
 
   if [ "$allow_conflict" -eq 1 ]; then
-    [ "$approved_conflicts_set" -eq 1 ] || usage
+    [ "$approved_envelope_set" -eq 1 ] || usage
   else
-    [ "$approved_conflicts_set" -eq 0 ] || usage
+    [ "$approved_envelope_set" -eq 0 ] || usage
   fi
-  if [ "$approved_conflicts_set" -eq 1 ]; then
-    approved_conflicts_canonical=$(printf '%s' "$approved_conflicts_json" |
-      jq -ce '
+  if [ "$approved_envelope_set" -eq 1 ]; then
+    approved_envelope_canonical=$(printf '%s' "$approved_envelope_json" |
+      jq -cSe '
         def conflict_rank:
           if . == "closed" then 0
           elif . == "assigned" then 1
           elif . == "in_progress" then 2
           elif . == "active_pull_request" then 3
           else 99 end;
-        if type == "array" and length > 0 and
-           all(.[]; type == "string") and
-           all(.[]; . as $conflict |
+        if type == "object" and .version == 1 and
+           (.issue | type == "object" and
+             (.host | type == "string" and length > 0) and
+             (.repository | type == "string" and length > 0) and
+             (.number | type == "number" and . > 0) and
+             (.state == "OPEN" or .state == "CLOSED")) and
+           (.configured_in_progress_status | type == "string") and
+           (.conflicts | type == "array" and length > 0 and
+             all(.[]; type == "string") and
+             all(.[]; . as $conflict |
              (["closed", "assigned", "in_progress", "active_pull_request"] |
               index($conflict)) != null) and
-           length == (unique | length) and
-           . == sort_by(conflict_rank)
-        then . else error("invalid approved conflict set") end') ||
-      fail "approved conflicts must be a nonempty, known, unique, ordered JSON array"
+             length == (unique | length) and
+             . == sort_by(conflict_rank)) and
+           (.evidence | type == "object" and
+             (.assignee_logins | type == "array" and
+               all(.[]; type == "string" and length > 0)) and
+             (.in_progress_project_items | type == "array" and
+               all(.[]; type == "object" and
+                 (.title | type == "string" and length > 0) and
+                 (.status | type == "string" and length > 0))) and
+             (.active_pull_requests | type == "array" and
+               all(.[]; type == "object" and
+                 (.number | type == "number" and . > 0) and
+                 (.state == "OPEN") and
+                 (.head_repository | type == "string" and length > 0) and
+                 (.head_branch | type == "string" and length > 0))))
+        then . else error("invalid approval envelope") end') ||
+      fail "approved envelope must be a canonical fix-issue approval object"
   fi
 
   response=$(GH_HOST="$host" gh issue view "$number" --repo "$repo" \
     --json number,title,body,state,labels,assignees,url,projectItems,closedByPullRequestsReferences) ||
     fail "issue preflight failed for $host/$repo#$number"
   record=$(printf '%s' "$response" | jq -ce \
+    --arg host "$host" \
+    --arg repo "$repo" \
+    --argjson issue_number "$number" \
     --arg configured_status "$in_progress_status" '
     if type == "object" and
-       (.number | type == "number" and . > 0) and
+       (.number == $issue_number) and
        (.title | type == "string") and
        (.body | type == "string") and
        (.state == "OPEN" or .state == "CLOSED") and
        (.labels | type == "array") and
        (.assignees | type == "array" and all(.[];
           type == "object" and (.login | type == "string" and length > 0))) and
-       (.url | type == "string" and length > 0) and
-       (.projectItems | type == "array") and
+       (.url == ("https://" + $host + "/" + $repo + "/issues/" +
+         ($issue_number | tostring))) and
+       (.projectItems | type == "array" and all(.[];
+         type == "object" and
+         (.title | type == "string" and length > 0) and
+         ((.status? // null) == null or
+           (.status | type == "object" and
+             (.name | type == "string" and length > 0))))) and
        (.closedByPullRequestsReferences | type == "array")
     then {
       number,
@@ -325,6 +354,12 @@ fix_preflight() {
       labels,
       assignees,
       url,
+      project_items: [
+        .projectItems[] | {
+          title,
+          status: ((.status? // null) | if . == null then null else .name end)
+        }
+      ],
       project_status: (
         ([
           .projectItems[]? |
@@ -345,7 +380,8 @@ fix_preflight() {
         if type == "object" and
            (.number | type == "number" and . > 0) and
            (.state == "OPEN" or .state == "CLOSED" or .state == "MERGED") and
-           (.url | type == "string" and length > 0) and
+           (.url == ("https://" + $host + "/" + $repo + "/pull/" +
+             (.number | tostring))) and
            (.headRefName | type == "string" and length > 0) and
            (.headRepository.nameWithOwner | type == "string" and length > 0)
         then {
@@ -361,18 +397,43 @@ fix_preflight() {
     else error("malformed issue preflight response") end') ||
     fail "issue preflight returned malformed data for $host/$repo#$number"
   record=$(printf '%s' "$record" | jq -ce \
+    --arg host "$host" \
+    --arg repo "$repo" \
     --arg configured_status "$in_progress_status" '
+    (.assignees | map(.login) | unique | sort) as $assignee_logins |
+    (.project_items | map(select(
+      $configured_status != "" and .status != null and
+      (.status | ascii_downcase) == ($configured_status | ascii_downcase)
+    )) | unique | sort_by(.title, .status)) as $in_progress_items |
+    (.linked_pull_requests | map(select(.state == "OPEN")) |
+      unique | sort_by(.number, .head_repository, .head_branch, .state))
+      as $active_pull_requests |
     [
       (if .state == "CLOSED" then "closed" else empty end),
-      (if (.assignees | length) > 0 then "assigned" else empty end),
-      (if $configured_status != "" and .project_status != null and
-          (.project_status | ascii_downcase) ==
-          ($configured_status | ascii_downcase)
-       then "in_progress" else empty end),
-      (if any(.linked_pull_requests[]; .state == "OPEN")
+      (if ($assignee_logins | length) > 0 then "assigned" else empty end),
+      (if ($in_progress_items | length) > 0 then "in_progress" else empty end),
+      (if ($active_pull_requests | length) > 0
        then "active_pull_request" else empty end)
     ] as $conflicts |
-    . + {conflicts: $conflicts}') ||
+    . + {
+      conflicts: $conflicts,
+      approval_envelope: {
+        version: 1,
+        issue: {
+          host: $host,
+          repository: $repo,
+          number: .number,
+          state: .state
+        },
+        configured_in_progress_status: ($configured_status | ascii_downcase),
+        conflicts: $conflicts,
+        evidence: {
+          assignee_logins: $assignee_logins,
+          in_progress_project_items: $in_progress_items,
+          active_pull_requests: $active_pull_requests
+        }
+      }
+    }') ||
     fail "issue preflight conflict classification failed for $host/$repo#$number"
 
   printf '%s\n' "$record"
@@ -385,11 +446,11 @@ fix_preflight() {
     fail "issue preflight primary classification failed for $host/$repo#$number"
 
   if [ "$allow_conflict" -eq 1 ]; then
-    current_conflicts=$(printf '%s' "$record" | jq -c '.conflicts') ||
-      fail "issue preflight conflict set could not be compared"
-    if [ "$current_conflicts" != "$approved_conflicts_canonical" ]; then
+    current_envelope=$(printf '%s' "$record" | jq -cS '.approval_envelope') ||
+      fail "issue preflight approval envelope could not be compared"
+    if [ "$current_envelope" != "$approved_envelope_canonical" ]; then
       if [ "$conflict" -eq 0 ]; then
-        fail "approved conflicts no longer match the current clean issue"
+        fail "approved envelope no longer matches the current clean issue"
       fi
       return "$conflict"
     fi

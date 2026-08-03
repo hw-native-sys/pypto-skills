@@ -176,7 +176,11 @@ elif argv and argv[0] == "api":
         sys.stderr.write(f"unexpected api endpoint: {endpoint}\\n")
         raise SystemExit(92)
 elif argv[:2] == ["issue", "create"]:
-    print("https://ghe.example.test/acme/widget/issues/42")
+    sys.stdout.write(os.environ.get(
+        "GH_CREATE_STDOUT", "https://ghe.example.test/acme/widget/issues/42\\n"
+    ))
+    sys.stderr.write(os.environ.get("GH_CREATE_STDERR", ""))
+    raise SystemExit(int(os.environ.get("GH_CREATE_EXIT", "0")))
 else:
     sys.stderr.write(f"unexpected gh invocation: {argv!r}\\n")
     raise SystemExit(91)
@@ -240,6 +244,7 @@ os.execv(real_git, [real_git, *argv])
         body_file: Path,
         *labels: str,
         token: str | None = None,
+        title: str | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         self.assertTrue(
@@ -250,7 +255,7 @@ os.execv(real_git, [real_git, *argv])
             mode,
             "ghe.example.test",
             "acme/widget",
-            self.title,
+            self.title if title is None else title,
             str(body_file),
         ]
         if token is not None:
@@ -450,7 +455,7 @@ os.execv(real_git, [real_git, *argv])
         self.assertIn("Host: ghe.example.test", result.stdout)
         self.assertIn("Repository: acme/widget", result.stdout)
         self.assertIn(f"Title: {self.title}", result.stdout)
-        self.assertIn("Labels: bug", result.stdout)
+        self.assertIn("Labels (1):\n- 3:bug", result.stdout)
         self.assertIn(self.body_file.read_text(encoding="utf-8"), result.stdout)
         self.assertRegex(result.stdout, r"ISSUE_CREATE:[0-9a-f]{40,64}")
         self.assertEqual([], self.transcript())
@@ -458,7 +463,36 @@ os.execv(real_git, [real_git, *argv])
     def test_preview_renders_multiple_labels_unambiguously(self) -> None:
         result = self.issue_create("preview", self.body_file, "bug", "regression")
 
-        self.assertIn("Labels: bug, regression", result.stdout)
+        self.assertIn("Labels (2):\n- 3:bug\n- 10:regression", result.stdout)
+        self.assertEqual([], self.transcript())
+
+    def test_preview_distinguishes_a_comma_label_from_multiple_labels(self) -> None:
+        single = self.issue_create("preview", self.body_file, "bug, regression")
+        multiple = self.issue_create("preview", self.body_file, "bug", "regression")
+
+        self.assertIn("Labels (1):\n- 15:bug, regression", single.stdout)
+        self.assertIn("Labels (2):\n- 3:bug\n- 10:regression", multiple.stdout)
+        self.assertNotEqual(single.stdout, multiple.stdout)
+        self.assertEqual([], self.transcript())
+
+    def test_preview_rejects_control_characters_in_title_and_labels(self) -> None:
+        cases = (
+            {"title": "unsafe\ntitle", "labels": ("bug",)},
+            {"title": self.title, "labels": ("bug\ttriage",)},
+            {"title": self.title, "labels": ("unsafe\x1blabel",)},
+            {"title": self.title, "labels": ("unsafe\x7flabel",)},
+        )
+
+        for case in cases:
+            with self.subTest(case=case):
+                result = self.issue_create(
+                    "preview",
+                    self.body_file,
+                    *case["labels"],
+                    title=case["title"],
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
         self.assertEqual([], self.transcript())
 
     def test_preview_displays_snapshot_when_source_changes_after_hash(self) -> None:
@@ -481,7 +515,58 @@ os.execv(real_git, [real_git, *argv])
             "create", self.body_file, "bug", token=token, check=False
         )
         self.assertNotEqual(0, result.returncode)
+        self.assertIn("ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr)
         self.assertEqual([], self.transcript())
+
+    def response_capture(self, stderr: str, stream: str) -> Path:
+        match = re.search(rf"ISSUE_CREATE_RESPONSE_{stream.upper()}:([^\n]+)", stderr)
+        self.assertIsNotNone(match, stderr)
+        assert match is not None
+        return Path(match.group(1))
+
+    def test_success_with_invalid_url_reports_created_but_unvalidated(self) -> None:
+        token = self.preview_token("bug")
+        unsafe_response = "created\x1b-but-url-missing\n"
+        self.environment["GH_CREATE_STDOUT"] = unsafe_response
+
+        result = self.issue_create(
+            "create", self.body_file, "bug", token=token, check=False
+        )
+
+        self.assertEqual(30, result.returncode)
+        self.assertIn(
+            "ISSUE_CREATE_OUTCOME:created_response_unvalidated", result.stderr
+        )
+        self.assertNotIn("\x1b", result.stderr)
+        stdout_capture = self.response_capture(result.stderr, "stdout")
+        self.assertEqual(unsafe_response, stdout_capture.read_text(encoding="utf-8"))
+        self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
+
+    def test_nonzero_gh_exit_reports_unknown_outcome_and_preserves_response(
+        self,
+    ) -> None:
+        token = self.preview_token("bug")
+        self.environment.update(
+            {
+                "GH_CREATE_STDOUT": "",
+                "GH_CREATE_STDERR": "request \x1b timed out after send\n",
+                "GH_CREATE_EXIT": "70",
+            }
+        )
+
+        result = self.issue_create(
+            "create", self.body_file, "bug", token=token, check=False
+        )
+
+        self.assertEqual(31, result.returncode)
+        self.assertIn("ISSUE_CREATE_OUTCOME:unknown", result.stderr)
+        self.assertNotIn("\x1b", result.stderr)
+        stderr_capture = self.response_capture(result.stderr, "stderr")
+        self.assertEqual(
+            "request \x1b timed out after send\n",
+            stderr_capture.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(0o600, stderr_capture.stat().st_mode & 0o777)
 
     def test_successful_create_uses_exact_confirmed_payload_without_project_call(
         self,
@@ -583,6 +668,18 @@ class CreateIssueSkillContractTests(unittest.TestCase):
         self.assertIn("stop only for `duplicate`", text.lower())
         self.assertIn("Never invent or reconstruct the preview token", text)
         self.assertIn("../../lib/github/scripts/issue-context.sh", text)
+
+    def test_skill_requires_read_only_verification_before_retrying_unknown_outcome(
+        self,
+    ) -> None:
+        text = SKILL.read_text(encoding="utf-8").lower()
+
+        self.assertIn("created_response_unvalidated", text)
+        self.assertIn("outcome:unknown", text)
+        self.assertIn("read-only verification", text)
+        self.assertIn("do not retry", text)
+        self.assertIn('gh_host="$github_host"', text)
+        self.assertIn('--repo "$issue_repo"', text)
 
 
 if __name__ == "__main__":

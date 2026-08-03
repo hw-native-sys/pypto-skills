@@ -163,6 +163,19 @@ the relationship so the user can decide. Creating the issue, adding labels,
 and updating a project are separate mutations; optional follow-up failure must
 be reported accurately without claiming that issue creation failed.
 
+The preview renders labels as a counted, byte-length-delimited sequence and
+rejects control characters in titles or labels, so its human approval framing
+is reversible. The token continues to bind the actual host, repository, title,
+label arguments, and immutable body snapshot.
+
+After the create command is invoked, classify failure conservatively. A
+successful CLI exit with an invalid response is a created issue whose response
+could not be validated; a nonzero exit after invocation has unknown server-side
+outcome. Preserve stdout and stderr in private files without echoing unsafe raw
+bytes. Never retry either case until a host- and repository-pinned read-only
+lookup checks the approved title/body/labels and absence is sufficiently
+established for fresh user approval.
+
 ## `fix-issue` Workflow
 
 The portable `fix-issue` skill will:
@@ -182,6 +195,13 @@ person owns the issue or it is already marked in progress, the skill stops and
 asks before taking ownership or duplicating work. Fork-based checkouts and
 nonstandard default branches are supported through discovery rather than
 special cases.
+
+Conflict approval uses one canonical envelope, not category names alone. The
+envelope binds the fixed host/repository/issue identity and state plus sorted
+assignee logins, matching project item/status identities, and active pull
+request number/head/state records. The authoritative reread must match the
+complete canonical payload; replacing an object inside the same conflict
+category fails closed and requires new approval.
 
 ## `auto-pr` Workflow
 
@@ -277,6 +297,9 @@ failure becomes another red test before the instruction is changed.
   to a different host/repository than the previewed target.
 - A partial external success is reported as partial success with the exact
   remaining action; it is never silently retried against a guessed target.
+- A write whose server-side result cannot be disproved is an unknown outcome,
+  not a confirmed failure; retain its private response and verify read-only
+  against the fixed host/repository before considering a retry.
 - Existing user changes and unrelated GitHub objects remain untouched.
 
 ## Acceptance Criteria

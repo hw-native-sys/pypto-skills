@@ -41,10 +41,18 @@ repository, malformed-data, and other API failures stop the workflow.
 
 When a later workflow needs one issue, keep the read host- and repository-pinned
 and retain this exact record shape: `number`, `title`, `body`, `state`, `labels`,
-`assignees`, `url`, `project_status`, and `linked_pull_requests`. Represent
-unknown assignment or status as `null`, not a guessed value. Each linked pull
-request record contains `number`, `state`, `url`, `head_repository`, and
-`head_branch`.
+`assignees`, `url`, `project_items`, `project_status`, `linked_pull_requests`,
+`conflicts`, and `approval_envelope`. Represent unknown assignment or status as
+`null`, not a guessed value. Each linked pull-request record contains `number`,
+`state`, `url`, `head_repository`, and `head_branch`.
+
+For `fix-preflight`, the canonical `approval_envelope` is the only conflict
+override payload. It binds the host, repository, issue number and state, the
+configured in-progress value, the ordered conflict set, sorted assignee logins,
+matching project item titles plus statuses, and sorted active pull-request
+number/head/state records. An authoritative reread compares the complete
+canonical envelope byte-for-byte after JSON key sorting. A replacement object
+in the same conflict category does not inherit an earlier approval.
 
 Treat issue reads, duplicate candidates, assignee/status discovery, and linked
 pull-request discovery as outputs of this read-only context. Keep every write in
