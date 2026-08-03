@@ -31,6 +31,8 @@ REQUIRED_GITHUB_REFERENCES = (
     ROOT / "lib/github/checkout-fork-branch.md",
 )
 
+REQUIRED_REPOSITORY_REFERENCES = (ROOT / "lib/repository/policy.md",)
+
 GITHUB_CONTEXT_VARIABLES = (
     "REPO_ROOT",
     "CURRENT_BRANCH",
@@ -167,6 +169,23 @@ class PortabilityTests(unittest.TestCase):
         for path in REQUIRED_GITHUB_REFERENCES:
             with self.subTest(path=path):
                 self.assertTrue(path.is_file(), f"missing required reference: {path}")
+
+    def test_required_repository_references_exist(self) -> None:
+        for path in REQUIRED_REPOSITORY_REFERENCES:
+            with self.subTest(path=path):
+                self.assertTrue(path.is_file(), f"missing required reference: {path}")
+
+    def test_git_commit_delegates_consumer_repository_policy(self) -> None:
+        skill = ROOT / "skills/git-commit/SKILL.md"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        if not skill.is_file():
+            return
+
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("../../lib/repository/policy.md", text)
+        self.assertNotRegex(text, r"\b(?:pytest|cargo test|npm test)\b")
+        self.assertNotRegex(text, r"\b(?:feat|fix|refactor|chore|docs|test)\([^)]*\):")
+        self.assertNotRegex(text, r"(?m)^\s*git add (?:-A|--all|\.|\*)")
 
     def test_setup_defines_context_contract(self) -> None:
         setup = ROOT / "lib/github/setup.md"
