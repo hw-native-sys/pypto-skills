@@ -160,6 +160,7 @@ print(json.dumps({
         )
 
         self.assertEqual(20, result.returncode)
+        self.assertEqual(["closed", "assigned"], json.loads(result.stdout)["conflicts"])
         self.assertTrue(all(call["operation"] == "read" for call in self.transcript()))
 
     def test_only_configured_in_progress_status_is_a_conflict(self) -> None:
@@ -234,9 +235,11 @@ print(json.dumps({
                 "url",
                 "project_status",
                 "linked_pull_requests",
+                "conflicts",
             },
             set(json.loads(result.stdout)),
         )
+        self.assertEqual([], json.loads(result.stdout)["conflicts"])
 
     def test_merged_linked_pull_request_does_not_block_clean_open_issue(self) -> None:
         self.configure_issue(linked_pr_state="MERGED")
@@ -270,6 +273,45 @@ print(json.dumps({
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
         self.assertTrue(all(call["operation"] == "read" for call in self.transcript()))
+
+    def test_combined_conflicts_are_all_emitted_and_both_modes_are_read_only(
+        self,
+    ) -> None:
+        self.configure_issue(
+            assignee="maintainer",
+            project_status="In Progress",
+            linked_pr_state="OPEN",
+        )
+        arguments = (
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--in-progress-status",
+            "in progress",
+        )
+
+        blocked = self.context(*arguments, check=False)
+        allowed = self.context(*arguments, "--allow-conflict", check=False)
+
+        self.assertEqual(21, blocked.returncode)
+        self.assertEqual(0, allowed.returncode, allowed.stderr)
+        for result in (blocked, allowed):
+            with self.subTest(mode=result.args):
+                record = json.loads(result.stdout)
+                self.assertEqual(
+                    ["assigned", "in_progress", "active_pull_request"],
+                    record["conflicts"],
+                )
+                self.assertEqual([{"login": "maintainer"}], record["assignees"])
+                self.assertEqual("In Progress", record["project_status"])
+                self.assertEqual("OPEN", record["linked_pull_requests"][0]["state"])
+
+        calls = self.transcript()
+        self.assertEqual(2, len(calls))
+        self.assertTrue(all(call["operation"] == "read" for call in calls))
+        self.assertTrue(all(call["host"] == "ghe.example.test" for call in calls))
+        self.assertTrue(all("acme/widget" in call["argv"] for call in calls))
 
 
 class FixIssueSkillContractTests(unittest.TestCase):
@@ -312,6 +354,16 @@ class FixIssueSkillContractTests(unittest.TestCase):
         self.assertIn('GH_HOST="$GITHUB_HOST" gh issue edit "$ISSUE_NUMBER"', text)
         self.assertIn('--repo "$ISSUE_REPO" --add-assignee @me', text)
         self.assertIn("repository-local", text)
+
+    def test_skill_requires_approval_for_the_complete_conflict_set(self) -> None:
+        text = self.skill_text().lower()
+
+        self.assertIn("primary exit is not the complete conflict set", text)
+        for conflict in ("`assigned`", "`in_progress`", "`active_pull_request`"):
+            with self.subTest(conflict=conflict):
+                self.assertIn(conflict, text)
+        self.assertIn("explicit approval for each conflict", text)
+        self.assertRegex(text, r"exactly\s+matches the approved conflict set")
 
 
 if __name__ == "__main__":

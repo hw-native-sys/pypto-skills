@@ -29,10 +29,16 @@ actual in-progress value. Capture and show the complete JSON and exit status:
 | `22` | Configured in-progress state | Report status; require explicit conflict approval |
 | `23` | Active linked pull request | Report links; require explicit conflict approval |
 
+The primary exit is not the complete conflict set. Read the emitted `conflicts`
+array and enumerate every entry before asking to proceed: `closed`, `assigned`,
+`in_progress`, and `active_pull_request`. For each entry, show the matching
+assignees, configured project status, or active pull-request records from the
+same JSON. Never infer from exit `21` that assignment is the only conflict.
+
 Do not run `--allow-conflict` merely because the user asked to fix the issue.
-Use it only after showing the conflict and receiving an explicit instruction to
-proceed despite that conflict. The override only rechecks read-only state; it
-does not authorize later mutations or bypass a closed issue.
+Use it only after showing the complete set and receiving explicit approval for
+each conflict. Closed is non-overridable even when other conflicts are present.
+The override only rechecks read-only state; it does not authorize mutations.
 
 Shape every identity or conflict stop report with these four fields: issue
 target (`GITHUB_HOST/ISSUE_REPO`), base (`DEFAULT_BRANCH`), later write target
@@ -58,10 +64,12 @@ Make the design concrete enough to approve before changing a file.
 ## Wait for approval
 
 Wait for explicit approval of the implementation design. If preflight reported
-status `21`, `22`, or `23`, also require an explicit instruction to proceed
-despite the reported assignee, status, or pull request. Design approval alone
-does not resolve that conflict. Rerun preflight with `--allow-conflict` only
-after both approvals, and stop if the current record changed materially.
+any conflict, also require explicit approval for each conflict in the emitted
+array. Design approval alone does not resolve them. Immediately before override,
+rerun preflight without `--allow-conflict` and confirm the new array exactly
+matches the approved conflict set. If it differs, show every current conflict
+and obtain fresh approval for each. Only then rerun with `--allow-conflict`;
+stop unconditionally when `closed` is present or exit `20` is returned.
 
 ## Optionally claim and update status
 

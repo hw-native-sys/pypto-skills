@@ -326,22 +326,29 @@ fix_preflight() {
     }
     else error("malformed issue preflight response") end') ||
     fail "issue preflight returned malformed data for $host/$repo#$number"
+  record=$(printf '%s' "$record" | jq -ce \
+    --arg configured_status "$in_progress_status" '
+    [
+      (if .state == "CLOSED" then "closed" else empty end),
+      (if (.assignees | length) > 0 then "assigned" else empty end),
+      (if $configured_status != "" and .project_status != null and
+          (.project_status | ascii_downcase) ==
+          ($configured_status | ascii_downcase)
+       then "in_progress" else empty end),
+      (if any(.linked_pull_requests[]; .state == "OPEN")
+       then "active_pull_request" else empty end)
+    ] as $conflicts |
+    . + {conflicts: $conflicts}') ||
+    fail "issue preflight conflict classification failed for $host/$repo#$number"
 
   printf '%s\n' "$record"
-  if [ "$(printf '%s' "$record" | jq -r '.state')" = "CLOSED" ]; then
-    conflict=20
-  elif [ "$(printf '%s' "$record" | jq -r '.assignees | length')" -gt 0 ]; then
-    conflict=21
-  elif [ -n "$in_progress_status" ] && printf '%s' "$record" | jq -e \
-    --arg status "$in_progress_status" \
-    '.project_status != null and
-     (.project_status | ascii_downcase) == ($status | ascii_downcase)' \
-    >/dev/null; then
-    conflict=22
-  elif printf '%s' "$record" | jq -e \
-    'any(.linked_pull_requests[]; .state == "OPEN")' >/dev/null; then
-    conflict=23
-  fi
+  conflict=$(printf '%s' "$record" | jq -er '
+    if (.conflicts | index("closed")) != null then 20
+    elif (.conflicts | index("assigned")) != null then 21
+    elif (.conflicts | index("in_progress")) != null then 22
+    elif (.conflicts | index("active_pull_request")) != null then 23
+    else 0 end') ||
+    fail "issue preflight primary classification failed for $host/$repo#$number"
 
   if [ "$allow_conflict" -eq 1 ] && [ "$conflict" -ge 21 ]; then
     return 0
