@@ -49,7 +49,7 @@ class GitCommitFileTests(unittest.TestCase):
         positions = [text.find(level) for level in precedence]
         self.assertTrue(all(position >= 0 for position in positions))
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("every authorized changed path", text)
+        self.assertIn("every changed path", text)
         self.assertIn("nested instruction", text)
         self.assertIn("Stop and ask the user", text)
         self.assertIn("Never replace missing policy", text)
@@ -62,6 +62,7 @@ class GitCommitFileTests(unittest.TestCase):
         text = SKILL.read_text(encoding="utf-8")
         self.assertIn("../../lib/repository/policy.md", text)
         self.assertIn("../../lib/repository/scripts/stage-owned.sh", text)
+        self.assertIn("every changed path", text)
         self.assertIn("Never use broad staging", text)
         self.assertIn("repository-selected verification", text)
         self.assertIn("repository policy and unambiguous history", text)
@@ -148,6 +149,18 @@ class StageOwnedBehaviorTests(unittest.TestCase):
             4,
             self.helper("missing.txt", check=False).returncode,
         )
+
+    def test_stage_helper_rejects_short_form_pathspec_magic_before_staging(
+        self,
+    ) -> None:
+        for unsafe_pathspec in (":/", ":!notes.txt", ":^notes.txt", ":"):
+            with self.subTest(pathspec=unsafe_pathspec):
+                result = self.helper(unsafe_pathspec, check=False)
+                staged_names = self.git("diff", "--cached", "--name-only").stdout
+                self.git("reset", "--quiet", "HEAD")
+
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertEqual("", staged_names)
 
 
 if __name__ == "__main__":

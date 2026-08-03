@@ -19,9 +19,10 @@ only staging mutation.
 
 1. Resolve the repository root and inspect the branch, status, unstaged diff,
    staged diff, and untracked names.
-2. Build an explicit list of authorized repository-root-relative paths. Inspect
+2. Resolve applicable nested instruction files for every changed path,
+   including unrelated paths that will remain untouched.
+3. Build an explicit list of authorized repository-root-relative paths. Inspect
    unrelated changes without editing or staging them.
-3. Resolve applicable repository policy separately for every authorized path.
 4. Review each authorized diff for correctness, scope, secrets, generated
    artifacts, and repository-required documentation.
 

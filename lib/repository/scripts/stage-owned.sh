@@ -29,7 +29,7 @@ declare -a authorized_order=()
 for path in "$@"; do
     case "$path" in
         '' | /* | . | ./* | */./* | */. | .. | ../* | */../* | */.. | \
-            */ | *//* | :\(* | *'*'* | *'?'* | *'['* | *']'*)
+            */ | *//* | :* | *'*'* | *'?'* | *'['* | *']'*)
             usage
             fail 2 "invalid/non-exact repo-relative path: $path"
             ;;

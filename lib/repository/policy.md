@@ -20,15 +20,15 @@ git config --local --list --show-origin
 git log -20 --format='%h%x09%s'
 ```
 
-Use the status and diffs to list the exact repository-root-relative paths in
-scope. Existing modifications are user-owned unless the current task clearly
-created them. Inspect all changes, but edit, stage, or commit only paths and
-hunks whose ownership is established.
+Use the status and diffs to list every changed path and the authorized subset as
+exact repository-root-relative paths. Existing modifications are user-owned
+unless the current task clearly created them. Inspect all changes, but edit,
+stage, or commit only paths and hunks whose ownership is established.
 
 Discover written instructions rather than assuming their names. Read files
 named by governing instructions, then inspect the repository root and every
-ancestor directory of every authorized changed path for instruction and policy
-documents. Useful discovery commands include:
+ancestor directory of every changed path for instruction and policy documents.
+Useful discovery commands include:
 
 ```bash
 find "$REPO_ROOT" -type f \( -name 'AGENTS.md' -o -name 'CLAUDE.md' \
@@ -37,8 +37,9 @@ git ls-files '.github/**' 'docs/**' '*CONTRIBUTING*' '*README*'
 ```
 
 Resolve the complete root-to-leaf chain of applicable nested instruction files
-for every authorized changed path. A nearer file governs only its documented
-scope; it does not silently erase compatible higher-level requirements.
+for every changed path, including unrelated paths that will remain untouched. A
+nearer file governs only its documented scope; it does not silently erase
+compatible higher-level requirements.
 
 ## Apply precedence
 
