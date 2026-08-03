@@ -5,6 +5,9 @@ set -eu
 LC_ALL=C
 export LC_ALL
 
+# Keep diagnostics independent from later command-local stderr redirections.
+exec 3>&2
+
 BODY_SNAPSHOT=""
 CREATE_STATE="idle"
 RESPONSE_STDOUT=""
@@ -42,23 +45,39 @@ trap cleanup_snapshot EXIT
 
 fail() {
   if [ "$CREATE_STATE" = "prewrite" ]; then
-    trap '' HUP INT TERM
-    printf '%s\n' 'ISSUE_CREATE_OUTCOME:confirmed_not_created' >&2
+    trap '' HUP INT TERM PIPE
+    printf '%s\n' 'ISSUE_CREATE_OUTCOME:confirmed_not_created' >&3 2>/dev/null || :
   fi
-  printf 'Error: %s\n' "$*" >&2
+  printf 'Error: %s\n' "$*" >&3 2>/dev/null || :
   exit 1
 }
 
+persist_diagnostic_fallback() {
+  local diagnostic=$1
+  if [ -n "${RESPONSE_STDERR:-}" ] && [ -f "$RESPONSE_STDERR" ]; then
+    printf '\n%s\n' "$diagnostic" >>"$RESPONSE_STDERR" 2>/dev/null || :
+  fi
+}
+
+emit_diagnostic() {
+  local diagnostic=$1
+  if ! printf '%s\n' "$diagnostic" >&3 2>/dev/null; then
+    persist_diagnostic_fallback "$diagnostic"
+  fi
+}
+
 post_write_stop() {
-  local outcome=$1 status=$2 message=$3
-  trap '' HUP INT TERM
-  printf 'ISSUE_CREATE_OUTCOME:%s\n' "$outcome" >&2
-  printf 'ISSUE_CREATE_RESPONSE_STDOUT:%s\n' "$RESPONSE_STDOUT" >&2
-  printf 'ISSUE_CREATE_RESPONSE_STDERR:%s\n' "$RESPONSE_STDERR" >&2
-  printf 'ISSUE_CREATE_VERIFY_TARGET:%s/%s\n' "$TARGET_HOST" "$TARGET_REPO" >&2
-  printf '%s\n' 'ISSUE_CREATE_RETRY:blocked_pending_read_only_verification' >&2
-  printf 'Error: %s Raw responses remain in private mode-0600 files; redact before sharing.\n' \
-    "$message" >&2
+  local outcome=$1 status=$2 message=$3 diagnostic
+  trap '' HUP INT TERM PIPE
+  diagnostic=$(printf '%s\n%s\n%s\n%s\n%s\nError: %s %s' \
+    "ISSUE_CREATE_OUTCOME:$outcome" \
+    "ISSUE_CREATE_RESPONSE_STDOUT:$RESPONSE_STDOUT" \
+    "ISSUE_CREATE_RESPONSE_STDERR:$RESPONSE_STDERR" \
+    "ISSUE_CREATE_VERIFY_TARGET:$TARGET_HOST/$TARGET_REPO" \
+    'ISSUE_CREATE_RETRY:blocked_pending_read_only_verification' \
+    "$message" \
+    'Raw responses remain in private mode-0600 files; redact before sharing.')
+  emit_diagnostic "$diagnostic"
   exit "$status"
 }
 
@@ -66,11 +85,10 @@ handle_signal() {
   local status=$1 signal_name=$2
   case "$CREATE_STATE" in
     prewrite)
-      trap '' HUP INT TERM
+      trap '' HUP INT TERM PIPE
       cleanup_response_captures || :
-      printf '%s\n' 'ISSUE_CREATE_OUTCOME:confirmed_not_created' >&2
-      printf 'Error: interrupted by %s before the create mutation boundary.\n' \
-        "$signal_name" >&2
+      emit_diagnostic "$(printf '%s\nError: interrupted by %s before the create mutation boundary.' \
+        'ISSUE_CREATE_OUTCOME:confirmed_not_created' "$signal_name")"
       exit "$status"
       ;;
     mutation_started | validating_response | reporting_success)
@@ -84,6 +102,7 @@ handle_signal() {
 trap 'handle_signal 129 HUP' HUP
 trap 'handle_signal 130 INT' INT
 trap 'handle_signal 143 TERM' TERM
+trap 'handle_signal 141 PIPE' PIPE
 
 usage() {
   cat >&2 <<'EOF'
@@ -243,7 +262,8 @@ create_issue() {
   # This is the logical mutation boundary. Everything before it is confirmed
   # local preparation; every interruption after it is conservatively unknown.
   CREATE_STATE="mutation_started"
-  GH_HOST="$host" gh "${arguments[@]}" >"$RESPONSE_STDOUT" 2>"$RESPONSE_STDERR" ||
+  GH_HOST="$host" gh "${arguments[@]}" 3>&- \
+    >"$RESPONSE_STDOUT" 2>"$RESPONSE_STDERR" ||
     gh_status=$?
   if [ "$gh_status" -ne 0 ]; then
     post_write_stop "unknown" 31 \
@@ -269,7 +289,10 @@ create_issue() {
       "GitHub CLI reported success but returned an invalid issue URL." ;;
   esac
   CREATE_STATE="reporting_success"
-  printf '%s\n' "$issue_url"
+  if ! printf '%s\n' "$issue_url"; then
+    post_write_stop "unknown" 31 \
+      "The validated issue URL could not be delivered on stdout; creation occurred."
+  fi
   CREATE_STATE="complete"
   if ! cleanup_response_captures; then
     printf '%s\n' \

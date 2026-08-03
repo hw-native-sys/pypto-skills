@@ -98,9 +98,17 @@ ports, or lookalike repository names produce `created_response_unvalidated`.
 
 Treat the helper's mutation boundary as authoritative. A signal before that
 boundary is `confirmed_not_created`; a signal from the boundary through URL
-validation and complete success output is `unknown`. Do not infer success from
-a partial URL on stdout. For every post-write stop, use the emitted
-`ISSUE_CREATE_VERIFY_TARGET` and `ISSUE_CREATE_RETRY:blocked...` markers.
+validation and complete success output is `unknown`. This includes `SIGPIPE`
+when the stdout consumer closes early. The helper checks the success write and
+does not enter its complete state unless the full URL was delivered.
+
+Do not infer success from a partial URL on stdout. Read outcome diagnostics from
+the stderr descriptor saved when the helper started, even if command-local
+stderr was redirected later. If that descriptor is also unavailable, the helper
+best-effort appends the same sanitized diagnostics to the private mode-0600
+stderr response capture without printing raw GitHub output. For every post-write
+stop, use `ISSUE_CREATE_VERIFY_TARGET` and
+`ISSUE_CREATE_RETRY:blocked...` markers.
 
 For either post-write outcome, do not retry. Keep the helper's private mode-0600
 stdout/stderr captures local and do not print or share raw response bytes. First

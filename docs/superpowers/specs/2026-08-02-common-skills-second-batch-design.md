@@ -183,6 +183,11 @@ fragment. Model interruption explicitly: signals before the logical mutation
 boundary are confirmed not created; signals from that boundary through complete
 validated URL output are unknown. Response captures remain available until the
 success output completes, eliminating a cleanup-to-output classification gap.
+Capture `SIGPIPE` under the same state machine and check the final stdout write
+explicitly. Diagnostics use a stderr descriptor preserved at startup, avoiding
+command-local redirection changes. If its consumer is also gone, append the
+sanitized outcome, verification target, and retry block to the retained private
+stderr capture as a best-effort forensic fallback; never echo raw response data.
 
 ## `fix-issue` Workflow
 

@@ -58,15 +58,20 @@ class CreateIssueBehaviorTests(unittest.TestCase):
         self.bin_path.mkdir()
         self.write_fake_gh()
         self.write_fake_git()
+        self.write_fake_cat()
         real_git = shutil.which("git")
+        real_cat = shutil.which("cat")
         self.assertIsNotNone(real_git)
+        self.assertIsNotNone(real_cat)
         assert real_git is not None
+        assert real_cat is not None
         self.environment = os.environ.copy()
         self.environment.update(
             {
                 "PATH": f"{self.bin_path}{os.pathsep}{self.environment['PATH']}",
                 "GH_TRANSCRIPT": str(self.transcript_path),
                 "TEST_REAL_GIT": real_git,
+                "TEST_REAL_CAT": real_cat,
             }
         )
         self.body_file = self.temp_path / "issue.md"
@@ -232,6 +237,39 @@ os.execv(real_git, [real_git, *argv])
             encoding="utf-8",
         )
         fake_git.chmod(0o755)
+
+    def write_fake_cat(self) -> None:
+        fake_cat = self.bin_path / "cat"
+        fake_cat.write_text(
+            """#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+real_cat = os.environ["TEST_REAL_CAT"]
+argv = sys.argv[1:]
+is_response_read = any("issue-create-response.stdout." in argument for argument in argv)
+if is_response_read and os.environ.get("BLOCK_CAT_AFTER_RESPONSE_READY"):
+    result = subprocess.run(
+        [real_cat, *argv],
+        check=False,
+        capture_output=True,
+    )
+    sys.stdout.buffer.write(result.stdout)
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.write(result.stderr)
+    sys.stderr.buffer.flush()
+    with open(os.environ["BLOCK_CAT_AFTER_RESPONSE_READY"], "w", encoding="utf-8") as ready:
+        ready.write("ready")
+        ready.flush()
+    with open(os.environ["BLOCK_CAT_RELEASE"], encoding="utf-8") as release:
+        release.read(2)
+    raise SystemExit(result.returncode)
+os.execv(real_cat, [real_cat, *argv])
+""",
+            encoding="utf-8",
+        )
+        fake_cat.chmod(0o755)
 
     def transcript(self) -> list[GHCall]:
         if not self.transcript_path.exists():
@@ -611,6 +649,63 @@ os.execv(real_git, [real_git, *argv])
         )
         self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
 
+    def test_broken_success_stdout_reports_unknown_on_saved_diagnostic_fd(
+        self,
+    ) -> None:
+        token = self.preview_token("bug")
+        ready_path = self.temp_path / "cat-ready.fifo"
+        release_path = self.temp_path / "cat-release.fifo"
+        os.mkfifo(ready_path, mode=0o600)
+        os.mkfifo(release_path, mode=0o600)
+        environment = self.environment.copy()
+        environment.update(
+            {
+                "BLOCK_CAT_AFTER_RESPONSE_READY": str(ready_path),
+                "BLOCK_CAT_RELEASE": str(release_path),
+            }
+        )
+        process = subprocess.Popen(
+            [
+                str(CREATE_HELPER),
+                "create",
+                "ghe.example.test",
+                "acme/widget",
+                self.title,
+                str(self.body_file),
+                token,
+                "bug",
+            ],
+            cwd=self.work,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        assert process.stdout is not None
+        assert process.stderr is not None
+        with ready_path.open(encoding="utf-8") as ready:
+            self.assertEqual("ready", ready.read(5))
+        self.assertEqual(1, len(self.transcript()))
+        process.stdout.close()
+        with release_path.open("w", encoding="utf-8") as release:
+            release.write("go")
+            release.flush()
+        stderr = process.stderr.read()
+        process.stderr.close()
+        returncode = process.wait(timeout=5)
+
+        self.assertNotEqual(0, returncode)
+        self.assertIn("ISSUE_CREATE_OUTCOME:unknown", stderr)
+        self.assertIn("ISSUE_CREATE_VERIFY_TARGET:ghe.example.test/acme/widget", stderr)
+        self.assertIn("ISSUE_CREATE_RETRY:blocked", stderr)
+        stdout_capture = self.response_capture(stderr, "stdout")
+        self.assertEqual(
+            "https://ghe.example.test/acme/widget/issues/42\n",
+            stdout_capture.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
+
     def test_success_with_invalid_url_reports_created_but_unvalidated(self) -> None:
         token = self.preview_token("bug")
         unsafe_response = "created\x1b-but-url-missing\n"
@@ -831,6 +926,8 @@ class CreateIssueSkillContractTests(unittest.TestCase):
         self.assertIn('--repo "$issue_repo"', text)
         self.assertIn("exact canonical issue url", text)
         self.assertIn("signal", text)
+        self.assertIn("sigpipe", text)
+        self.assertIn("stderr descriptor saved", text)
 
 
 if __name__ == "__main__":
