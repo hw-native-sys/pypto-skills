@@ -19,17 +19,21 @@ instead of recreating it.
 
 ## Publish and bind one PR
 
-Delegate the authorized task change to `git-commit`, then delegate publication
-to `github-pr`. Retain the exact host, repository, number, URL, base, and head
-that `github-pr` reports. This identity is the current pull request.
+Delegate publication directly to `github-pr`. Do not invoke `git-commit`
+directly: `github-pr` must select and validate the route, head, branch, and
+write authority before it invokes `git-commit`. Retain the exact host,
+repository, number, URL, base, and head that `github-pr` reports. This identity
+is the current pull request; `git-commit` is only an indirect dependency here.
 
 Scope every lookup, delegated repair, recheck, and report to that exact
 identity. Reject a missing, ambiguous, closed, or mismatched identity. Never
 enumerate, inspect, update, or reuse state from another pull request. Never
 invent a missing identity field or substitute an illustrative host,
-repository, number, base, or head. In a dry run where publication is
-intentionally not performed, report it as unknown and keep every later action
-conditional; in a live workflow, treat it as a delegated blocker.
+repository, number, base, or head. Missing PR identity is terminal in every mode.
+In a dry run where publication is intentionally not performed, report intended
+actions and the unknown identity, then stop; it must not enter classification,
+guard, or repair orchestration. In a live workflow, treat missing identity as
+a delegated blocker.
 
 Create a fresh task-private attempt ledger outside the consumer repository.
 Resolve [the loop helper](scripts/auto-pr-loop.sh) relative to this file; never
@@ -60,11 +64,17 @@ For each iteration:
    normalized root cause. Invoke `guard ITERATION FINDING_KEY LEDGER` before
    authorizing work. The same finding may be attempted at most twice. Exit 20
    means stop before a third attempt; never rename a key to evade the bound.
-4. Delegate exactly one repair iteration for the approved `fix` findings to
-   `fix-pr`. Let `fix-pr` own evidence gathering, edits, repository-local
-   commit and verification policy, publication, replies, resolution, and its
-   final recheck. Do not widen the confirmed set during that delegation.
-5. **Rerun repository-required verification after each fix** through
+4. Supply `fix-pr` one composed-authorization envelope for every approved
+   `fix`: the exact validated current-PR identity (host, repository, number,
+   and head); the unchanged numbered inventory entry and stable finding ID;
+   the normalized allowed kind (`ci-objective`, `correctness`, or
+   `style-policy`); successful guard iteration and attempt evidence; and the
+   standing authorization from the explicit `auto-pr` invocation.
+5. Delegate exactly one repair iteration for only those findings to `fix-pr`.
+   Let it independently validate the envelope and own evidence gathering,
+   edits, repository-local commit and verification policy, publication,
+   replies, resolution, and its final recheck. Do not widen the confirmed set.
+6. **Rerun repository-required verification after each fix** through
    `fix-pr`, and require its verified current-head result before the next
    inventory. A failed or partial delegated step is a blocker, not success.
 

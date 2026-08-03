@@ -166,7 +166,57 @@ class AutoPrCompositionTests(unittest.TestCase):
 
         text = SKILL.read_text(encoding="utf-8")
         self.assertRegex(text, r"Never\s+invent a missing identity field")
-        self.assertIn("report it as unknown", text)
+        self.assertIn("unknown identity", text)
+
+    def test_missing_identity_is_terminal_before_orchestration(self) -> None:
+        self.assertTrue(SKILL.is_file(), f"missing required skill: {SKILL}")
+        if not SKILL.is_file():
+            return
+
+        text = SKILL.read_text(encoding="utf-8")
+        terminal = text.find("Missing PR identity is terminal in every mode")
+        ledger = text.find("Create a fresh task-private attempt ledger")
+        orchestration = text.find("## Orchestrate the bounded loop")
+        self.assertGreaterEqual(terminal, 0)
+        self.assertGreater(ledger, terminal)
+        self.assertGreater(orchestration, ledger)
+        self.assertRegex(
+            text,
+            r"must not enter classification,\s+guard, or repair orchestration",
+        )
+
+    def test_publication_delegates_route_validation_to_github_pr(self) -> None:
+        self.assertTrue(SKILL.is_file(), f"missing required skill: {SKILL}")
+        if not SKILL.is_file():
+            return
+
+        text = SKILL.read_text(encoding="utf-8")
+        publish_start = text.find("## Publish and bind one PR")
+        publish_end = text.find("## Orchestrate the bounded loop")
+        self.assertGreaterEqual(publish_start, 0)
+        self.assertGreater(publish_end, publish_start)
+        publish = text[publish_start:publish_end]
+        self.assertIn("Delegate publication directly to `github-pr`", publish)
+        self.assertRegex(publish, r"Do not invoke `git-commit`\s+directly")
+        self.assertNotRegex(publish, r"Delegate[^\n]*to `git-commit`")
+
+    def test_auto_pr_supplies_narrow_composed_authorization(self) -> None:
+        self.assertTrue(SKILL.is_file(), f"missing required skill: {SKILL}")
+        if not SKILL.is_file():
+            return
+
+        text = SKILL.read_text(encoding="utf-8")
+        for evidence in (
+            "exact validated current-PR identity",
+            "unchanged numbered inventory entry",
+            "stable finding ID",
+            "normalized allowed kind",
+            "successful guard iteration and attempt evidence",
+            "standing authorization from the explicit `auto-pr` invocation",
+        ):
+            with self.subTest(evidence=evidence):
+                self.assertIn(evidence, text)
+        self.assertIn("for only those findings", text)
 
     def test_deferred_judgment_takes_precedence_over_green_checks(self) -> None:
         self.assertTrue(SKILL.is_file(), f"missing required skill: {SKILL}")

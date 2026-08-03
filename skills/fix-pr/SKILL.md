@@ -84,6 +84,26 @@ Classify by technical content, not by whether the author is a bot or human.
 Deduplicate summaries that merely repeat an inline item. Include the proposed
 fix or no-change response for every item.
 
+## Validate auto-pr composed authorization
+
+Keep the confirmation gate below unchanged for every direct invocation. Accept
+standing authorization only when the active caller is `auto-pr` and supplies
+standing authorization from an explicit `auto-pr` invocation. Before
+bypassing the gate, independently revalidate against fresh context and inventory:
+
+- exact host, repository, number, and head;
+- unchanged numbered inventory entry and stable finding ID;
+- normalized kind `ci-objective`, `correctness`, or `style-policy`, with style
+  independently required by repository policy; and
+- successful guard iteration and attempt evidence for that same stable key,
+  verified against the supplied task-private ledger without incrementing it.
+
+Reject preauthorization and do not auto-repair on any identity or head mismatch,
+inventory entry or stable finding ID mismatch, kind or classification mismatch,
+guard or ledger mismatch, missing evidence, unknown or deferred kind, or scope
+growth. These must fall back to the explicit confirmation gate; stop first when
+an existing context or policy stop rule applies.
+
 ## Explicit confirmation gate
 
 Ask which numbered findings to address, decline, or defer. Recommend actionable

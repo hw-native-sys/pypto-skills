@@ -571,6 +571,48 @@ class PortabilityTests(unittest.TestCase):
         self.assertGreater(fixes, confirmation)
         self.assertIn("fix immediately", text)
 
+    def test_fix_pr_auto_pr_authorization_is_narrow_and_fail_closed(self) -> None:
+        skill = ROOT / "skills/fix-pr/SKILL.md"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        if not skill.is_file():
+            return
+
+        text = skill.read_text(encoding="utf-8")
+        findings = text.find("## Classify and present findings")
+        composed = text.find("## Validate auto-pr composed authorization")
+        confirmation = text.find("## Explicit confirmation gate")
+        self.assertGreater(composed, findings)
+        self.assertGreater(confirmation, composed)
+        gate = text[confirmation : text.find("## Apply selected fixes")]
+        self.assertIn("Do not edit until the user confirms", gate)
+        self.assertIn("every direct invocation", text)
+        self.assertRegex(text, r"only when the active caller is `auto-pr`")
+        for requirement in (
+            "active caller is `auto-pr`",
+            "exact host, repository, number, and head",
+            "unchanged numbered inventory entry and stable finding ID",
+            "`ci-objective`, `correctness`, or `style-policy`",
+            "successful guard iteration and attempt evidence",
+            "standing authorization from an explicit `auto-pr` invocation",
+            "independently revalidate",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, text)
+        self.assertIn("fall back to the explicit confirmation gate", text)
+        self.assertIn("unknown or deferred kind", text)
+        for mismatch in (
+            "identity or head mismatch",
+            "inventory entry or stable finding ID mismatch",
+            "kind or classification mismatch",
+            "guard or ledger mismatch",
+        ):
+            with self.subTest(mismatch=mismatch):
+                self.assertIn(mismatch, text)
+        self.assertIn("do not auto-repair", text)
+        self.assertIn("without incrementing it", text)
+        self.assertRegex(text, r"scope\s+growth")
+        self.assertIn("same stable key", text)
+
     def test_fix_pr_delegates_repository_policy(self) -> None:
         skill = ROOT / "skills/fix-pr/SKILL.md"
         self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
