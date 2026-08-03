@@ -204,6 +204,21 @@ class PortabilityTests(unittest.TestCase):
         self.assertNotRegex(text, r"(?m)^\s*gh issue create\b")
         self.assertLessEqual(len(text.splitlines()), 200)
 
+    def test_fix_issue_has_no_fixed_repository_project_or_test_policy(self) -> None:
+        skill = ROOT / "skills/fix-issue/SKILL.md"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        if not skill.is_file():
+            return
+
+        text = skill.read_text(encoding="utf-8")
+        self.assertIn("../../lib/repository/policy.md", text)
+        self.assertIn("../../lib/github/issue-context.md", text)
+        self.assertIn("../../lib/github/branch-naming.md", text)
+        self.assertNotRegex(text, r"(?i)project\s+#?\d+")
+        self.assertNotRegex(text, r"\b(?:pytest|cargo test|npm test)\b")
+        self.assertNotRegex(text, r"(?m)^\s*(?:fix|feat|refactor|docs|support)/")
+        self.assertLessEqual(len(text.splitlines()), 200)
+
     def test_setup_defines_context_contract(self) -> None:
         setup = ROOT / "lib/github/setup.md"
         self.assertTrue(setup.is_file(), f"missing required reference: {setup}")

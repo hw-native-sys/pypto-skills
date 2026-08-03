@@ -16,6 +16,7 @@ Usage:
   issue-context.sh repository
   issue-context.sh search HOST REPO QUERY
   issue-context.sh templates HOST REPO
+  issue-context.sh fix-preflight HOST REPO NUMBER [--in-progress-status STATUS] [--allow-conflict]
 EOF
   exit 2
 }
@@ -238,6 +239,116 @@ list_templates() {
     end'
 }
 
+fix_preflight() {
+  [ "$#" -ge 3 ] || usage
+  local host=$1 repo=$2 number=$3
+  local in_progress_status="" allow_conflict=0 response record conflict=0
+  shift 3
+
+  validate_host "$host" || fail "invalid GitHub host: $host"
+  validate_repo "$repo" || fail "repository must be an owner/name identity"
+  [[ "$number" =~ ^[1-9][0-9]*$ ]] || fail "issue number must be a positive integer"
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --in-progress-status)
+        [ "$#" -ge 2 ] || usage
+        [ -z "$in_progress_status" ] || usage
+        in_progress_status=$2
+        [ -n "$in_progress_status" ] || fail "in-progress status is empty"
+        shift 2
+        ;;
+      --allow-conflict)
+        [ "$allow_conflict" -eq 0 ] || usage
+        allow_conflict=1
+        shift
+        ;;
+      *) usage ;;
+    esac
+  done
+
+  response=$(GH_HOST="$host" gh issue view "$number" --repo "$repo" \
+    --json number,title,body,state,labels,assignees,url,projectItems,closedByPullRequestsReferences) ||
+    fail "issue preflight failed for $host/$repo#$number"
+  record=$(printf '%s' "$response" | jq -ce \
+    --arg configured_status "$in_progress_status" '
+    if type == "object" and
+       (.number | type == "number" and . > 0) and
+       (.title | type == "string") and
+       (.body | type == "string") and
+       (.state == "OPEN" or .state == "CLOSED") and
+       (.labels | type == "array") and
+       (.assignees | type == "array" and all(.[];
+          type == "object" and (.login | type == "string" and length > 0))) and
+       (.url | type == "string" and length > 0) and
+       (.projectItems | type == "array") and
+       (.closedByPullRequestsReferences | type == "array")
+    then {
+      number,
+      title,
+      body,
+      state,
+      labels,
+      assignees,
+      url,
+      project_status: (
+        ([
+          .projectItems[]? |
+          .status? |
+          if type == "object" then .name else . end |
+          select(type == "string" and length > 0)
+        ]) as $statuses |
+        ((if $configured_status == "" then
+            ($statuses | first)
+          else
+            (($statuses | map(select(
+              (. | ascii_downcase) == ($configured_status | ascii_downcase)
+            ))) | first) // ($statuses | first)
+          end) // null)
+      ),
+      linked_pull_requests: [
+        .closedByPullRequestsReferences[] |
+        if type == "object" and
+           (.number | type == "number" and . > 0) and
+           (.state == "OPEN" or .state == "CLOSED" or .state == "MERGED") and
+           (.url | type == "string" and length > 0) and
+           (.headRefName | type == "string" and length > 0) and
+           (.headRepository.nameWithOwner | type == "string" and length > 0)
+        then {
+          number,
+          state,
+          url,
+          head_repository: .headRepository.nameWithOwner,
+          head_branch: .headRefName
+        }
+        else error("malformed linked pull request") end
+      ]
+    }
+    else error("malformed issue preflight response") end') ||
+    fail "issue preflight returned malformed data for $host/$repo#$number"
+
+  printf '%s\n' "$record"
+  if [ "$(printf '%s' "$record" | jq -r '.state')" = "CLOSED" ]; then
+    conflict=20
+  elif [ "$(printf '%s' "$record" | jq -r '.assignees | length')" -gt 0 ]; then
+    conflict=21
+  elif [ -n "$in_progress_status" ] && printf '%s' "$record" | jq -e \
+    --arg status "$in_progress_status" \
+    '.project_status != null and
+     (.project_status | ascii_downcase) == ($status | ascii_downcase)' \
+    >/dev/null; then
+    conflict=22
+  elif printf '%s' "$record" | jq -e \
+    'any(.linked_pull_requests[]; .state == "OPEN")' >/dev/null; then
+    conflict=23
+  fi
+
+  if [ "$allow_conflict" -eq 1 ] && [ "$conflict" -ge 21 ]; then
+    return 0
+  fi
+  return "$conflict"
+}
+
 [ "$#" -ge 1 ] || usage
 command=$1
 shift
@@ -245,5 +356,6 @@ case "$command" in
   repository) repository_context "$@" ;;
   search) search_issues "$@" ;;
   templates) list_templates "$@" ;;
+  fix-preflight) fix_preflight "$@" ;;
   *) usage ;;
 esac
