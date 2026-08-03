@@ -176,6 +176,14 @@ bytes. Never retry either case until a host- and repository-pinned read-only
 lookup checks the approved title/body/labels and absence is sufficiently
 established for fresh user approval.
 
+Accept a returned URL only when it has the exact canonical path
+`https://HOST/OWNER/REPO/issues/<positive-integer>` for the validated literal
+host and repository, with no user information, port, extra path, query, or
+fragment. Model interruption explicitly: signals before the logical mutation
+boundary are confirmed not created; signals from that boundary through complete
+validated URL output are unknown. Response captures remain available until the
+success output completes, eliminating a cleanup-to-output classification gap.
+
 ## `fix-issue` Workflow
 
 The portable `fix-issue` skill will:

@@ -6,10 +6,11 @@ LC_ALL=C
 export LC_ALL
 
 BODY_SNAPSHOT=""
-CREATE_OPERATION=0
-MUTATION_STARTED=0
+CREATE_STATE="idle"
 RESPONSE_STDOUT=""
 RESPONSE_STDERR=""
+TARGET_HOST=""
+TARGET_REPO=""
 
 cleanup_snapshot() {
   if [ -n "${BODY_SNAPSHOT:-}" ]; then
@@ -18,10 +19,30 @@ cleanup_snapshot() {
   fi
 }
 
+cleanup_response_captures() {
+  local status=0
+  if [ -n "${RESPONSE_STDOUT:-}" ]; then
+    if rm -f -- "$RESPONSE_STDOUT"; then
+      RESPONSE_STDOUT=""
+    else
+      status=1
+    fi
+  fi
+  if [ -n "${RESPONSE_STDERR:-}" ]; then
+    if rm -f -- "$RESPONSE_STDERR"; then
+      RESPONSE_STDERR=""
+    else
+      status=1
+    fi
+  fi
+  return "$status"
+}
+
 trap cleanup_snapshot EXIT
 
 fail() {
-  if [ "$CREATE_OPERATION" -eq 1 ] && [ "$MUTATION_STARTED" -eq 0 ]; then
+  if [ "$CREATE_STATE" = "prewrite" ]; then
+    trap '' HUP INT TERM
     printf '%s\n' 'ISSUE_CREATE_OUTCOME:confirmed_not_created' >&2
   fi
   printf 'Error: %s\n' "$*" >&2
@@ -30,9 +51,12 @@ fail() {
 
 post_write_stop() {
   local outcome=$1 status=$2 message=$3
+  trap '' HUP INT TERM
   printf 'ISSUE_CREATE_OUTCOME:%s\n' "$outcome" >&2
   printf 'ISSUE_CREATE_RESPONSE_STDOUT:%s\n' "$RESPONSE_STDOUT" >&2
   printf 'ISSUE_CREATE_RESPONSE_STDERR:%s\n' "$RESPONSE_STDERR" >&2
+  printf 'ISSUE_CREATE_VERIFY_TARGET:%s/%s\n' "$TARGET_HOST" "$TARGET_REPO" >&2
+  printf '%s\n' 'ISSUE_CREATE_RETRY:blocked_pending_read_only_verification' >&2
   printf 'Error: %s Raw responses remain in private mode-0600 files; redact before sharing.\n' \
     "$message" >&2
   exit "$status"
@@ -40,12 +64,21 @@ post_write_stop() {
 
 handle_signal() {
   local status=$1 signal_name=$2
-  if [ "$MUTATION_STARTED" -eq 1 ] && [ -n "$RESPONSE_STDOUT" ] &&
-     [ -n "$RESPONSE_STDERR" ]; then
-    post_write_stop "unknown" 31 \
-      "The create request was interrupted by $signal_name; creation may have occurred."
-  fi
-  exit "$status"
+  case "$CREATE_STATE" in
+    prewrite)
+      trap '' HUP INT TERM
+      cleanup_response_captures || :
+      printf '%s\n' 'ISSUE_CREATE_OUTCOME:confirmed_not_created' >&2
+      printf 'Error: interrupted by %s before the create mutation boundary.\n' \
+        "$signal_name" >&2
+      exit "$status"
+      ;;
+    mutation_started | validating_response | reporting_success)
+      post_write_stop "unknown" 31 \
+        "The create request was interrupted by $signal_name; creation may have occurred."
+      ;;
+    *) exit "$status" ;;
+  esac
 }
 
 trap 'handle_signal 129 HUP' HUP
@@ -170,10 +203,11 @@ preview_issue() {
 create_issue() {
   [ "$#" -ge 5 ] || usage
   local host=$1 repo=$2 title=$3 body_file=$4 approved_token=$5
-  local current_token issue_url issue_number capture_directory gh_status
+  local current_token issue_url issue_prefix issue_number capture_directory gh_status
   shift 5
-  CREATE_OPERATION=1
   validate_payload "$host" "$repo" "$title" "$body_file" "$@"
+  TARGET_HOST=$host
+  TARGET_REPO=$repo
   snapshot_body "$body_file"
   current_token=$(payload_token "$host" "$repo" "$title" "$BODY_SNAPSHOT" "$@") ||
     fail "unable to recompute issue preview token"
@@ -206,13 +240,16 @@ create_issue() {
     arguments+=(--label "$label")
   done
   gh_status=0
-  MUTATION_STARTED=1
+  # This is the logical mutation boundary. Everything before it is confirmed
+  # local preparation; every interruption after it is conservatively unknown.
+  CREATE_STATE="mutation_started"
   GH_HOST="$host" gh "${arguments[@]}" >"$RESPONSE_STDOUT" 2>"$RESPONSE_STDERR" ||
     gh_status=$?
   if [ "$gh_status" -ne 0 ]; then
     post_write_stop "unknown" 31 \
       "GitHub CLI returned nonzero after the create request; creation may have occurred."
   fi
+  CREATE_STATE="validating_response"
   issue_url=$(cat -- "$RESPONSE_STDOUT") ||
     post_write_stop "created_response_unvalidated" 30 \
       "GitHub CLI reported success but its stdout could not be read."
@@ -220,20 +257,24 @@ create_issue() {
     post_write_stop "created_response_unvalidated" 30 \
       "GitHub CLI reported success but returned an unsafe issue URL."
   fi
+  issue_prefix="https://$host/$repo/issues/"
   case "$issue_url" in
-    "https://$host/$repo/issues/"*) ;;
+    "$issue_prefix"*) ;;
     *) post_write_stop "created_response_unvalidated" 30 \
          "GitHub CLI reported success but returned an unexpected issue URL." ;;
   esac
-  issue_number=${issue_url##*/}
+  issue_number=${issue_url#"$issue_prefix"}
   case "$issue_number" in
     "" | 0* | *[!0-9]*) post_write_stop "created_response_unvalidated" 30 \
       "GitHub CLI reported success but returned an invalid issue URL." ;;
   esac
-  rm -f -- "$RESPONSE_STDOUT" "$RESPONSE_STDERR"
-  RESPONSE_STDOUT=""
-  RESPONSE_STDERR=""
+  CREATE_STATE="reporting_success"
   printf '%s\n' "$issue_url"
+  CREATE_STATE="complete"
+  if ! cleanup_response_captures; then
+    printf '%s\n' \
+      'Warning: issue URL validated, but one or more private response captures could not be removed.' >&2
+  fi
 }
 
 [ "$#" -ge 1 ] || usage
@@ -241,6 +282,9 @@ command=$1
 shift
 case "$command" in
   preview) preview_issue "$@" ;;
-  create) create_issue "$@" ;;
+  create)
+    CREATE_STATE="prewrite"
+    create_issue "$@"
+    ;;
   *) usage ;;
 esac

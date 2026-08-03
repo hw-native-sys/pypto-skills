@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -98,6 +99,7 @@ Related: #18
             """#!/usr/bin/env python3
 import json
 import os
+import signal
 import sys
 
 argv = sys.argv[1:]
@@ -176,9 +178,17 @@ elif argv and argv[0] == "api":
         sys.stderr.write(f"unexpected api endpoint: {endpoint}\\n")
         raise SystemExit(92)
 elif argv[:2] == ["issue", "create"]:
-    sys.stdout.write(os.environ.get(
+    create_stdout = os.environ.get(
         "GH_CREATE_STDOUT", "https://ghe.example.test/acme/widget/issues/42\\n"
-    ))
+    )
+    if os.environ.get("BLOCK_GH_AFTER_RESPONSE_READY"):
+        sys.stdout.write(create_stdout)
+        sys.stdout.flush()
+        with open(os.environ["BLOCK_GH_AFTER_RESPONSE_READY"], "w", encoding="utf-8") as ready:
+            ready.write("ready")
+            ready.flush()
+            signal.pause()
+    sys.stdout.write(create_stdout)
     sys.stderr.write(os.environ.get("GH_CREATE_STDERR", ""))
     raise SystemExit(int(os.environ.get("GH_CREATE_EXIT", "0")))
 else:
@@ -194,11 +204,17 @@ else:
         fake_git.write_text(
             """#!/usr/bin/env python3
 import os
+import signal
 import subprocess
 import sys
 
 real_git = os.environ["TEST_REAL_GIT"]
 argv = sys.argv[1:]
+if argv and argv[0] == "hash-object" and os.environ.get("BLOCK_GIT_HASH_READY"):
+    with open(os.environ["BLOCK_GIT_HASH_READY"], "w", encoding="utf-8") as ready:
+        ready.write("ready")
+        ready.flush()
+        signal.pause()
 if argv and argv[0] == "hash-object" and os.environ.get("RACE_BODY_FILE"):
     result = subprocess.run(
         [real_git, *argv],
@@ -245,6 +261,8 @@ os.execv(real_git, [real_git, *argv])
         *labels: str,
         token: str | None = None,
         title: str | None = None,
+        host: str = "ghe.example.test",
+        repo: str = "acme/widget",
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         self.assertTrue(
@@ -253,8 +271,8 @@ os.execv(real_git, [real_git, *argv])
         arguments = [
             str(CREATE_HELPER),
             mode,
-            "ghe.example.test",
-            "acme/widget",
+            host,
+            repo,
             self.title if title is None else title,
             str(body_file),
         ]
@@ -273,8 +291,15 @@ os.execv(real_git, [real_git, *argv])
             self.fail(f"issue-create failed:\n{result.stdout}{result.stderr}")
         return result
 
-    def preview_token(self, *labels: str) -> str:
-        result = self.issue_create("preview", self.body_file, *labels)
+    def preview_token(
+        self,
+        *labels: str,
+        host: str = "ghe.example.test",
+        repo: str = "acme/widget",
+    ) -> str:
+        result = self.issue_create(
+            "preview", self.body_file, *labels, host=host, repo=repo
+        )
         match = re.search(r"ISSUE_CREATE:([0-9a-f]{40,64})", result.stdout)
         self.assertIsNotNone(match, result.stdout)
         assert match is not None
@@ -524,6 +549,68 @@ os.execv(real_git, [real_git, *argv])
         assert match is not None
         return Path(match.group(1))
 
+    def interrupted_create(
+        self, token: str, coordination_variable: str
+    ) -> subprocess.CompletedProcess[str]:
+        ready_path = self.temp_path / f"{coordination_variable}.fifo"
+        os.mkfifo(ready_path, mode=0o600)
+        environment = self.environment.copy()
+        environment[coordination_variable] = str(ready_path)
+        process = subprocess.Popen(
+            [
+                str(CREATE_HELPER),
+                "create",
+                "ghe.example.test",
+                "acme/widget",
+                self.title,
+                str(self.body_file),
+                token,
+                "bug",
+            ],
+            cwd=self.work,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        with ready_path.open(encoding="utf-8") as ready:
+            self.assertEqual("ready", ready.read(5))
+        os.killpg(process.pid, signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=5)
+        return subprocess.CompletedProcess(
+            process.args, process.returncode, stdout, stderr
+        )
+
+    def test_signal_before_mutation_is_confirmed_not_created(self) -> None:
+        token = self.preview_token("bug")
+
+        result = self.interrupted_create(token, "BLOCK_GIT_HASH_READY")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr)
+        self.assertNotIn("ISSUE_CREATE_OUTCOME:unknown", result.stderr)
+        self.assertEqual([], self.transcript())
+
+    def test_signal_after_response_before_output_is_unknown(self) -> None:
+        token = self.preview_token("bug")
+
+        result = self.interrupted_create(token, "BLOCK_GH_AFTER_RESPONSE_READY")
+
+        self.assertEqual(31, result.returncode)
+        self.assertEqual("", result.stdout)
+        self.assertIn("ISSUE_CREATE_OUTCOME:unknown", result.stderr)
+        self.assertIn(
+            "ISSUE_CREATE_VERIFY_TARGET:ghe.example.test/acme/widget", result.stderr
+        )
+        self.assertIn("ISSUE_CREATE_RETRY:blocked", result.stderr)
+        stdout_capture = self.response_capture(result.stderr, "stdout")
+        self.assertEqual(
+            "https://ghe.example.test/acme/widget/issues/42\n",
+            stdout_capture.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
+
     def test_success_with_invalid_url_reports_created_but_unvalidated(self) -> None:
         token = self.preview_token("bug")
         unsafe_response = "created\x1b-but-url-missing\n"
@@ -541,6 +628,64 @@ os.execv(real_git, [real_git, *argv])
         stdout_capture = self.response_capture(result.stderr, "stdout")
         self.assertEqual(unsafe_response, stdout_capture.read_text(encoding="utf-8"))
         self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
+
+    def test_extra_url_path_is_created_but_unvalidated(self) -> None:
+        token = self.preview_token("bug")
+        self.environment["GH_CREATE_STDOUT"] = (
+            "https://ghe.example.test/acme/widget/issues/not-an-issue/42\n"
+        )
+
+        result = self.issue_create(
+            "create", self.body_file, "bug", token=token, check=False
+        )
+
+        self.assertEqual(30, result.returncode)
+        self.assertIn(
+            "ISSUE_CREATE_OUTCOME:created_response_unvalidated", result.stderr
+        )
+
+    def test_only_exact_canonical_issue_url_shape_is_accepted(self) -> None:
+        token = self.preview_token("bug")
+        invalid_urls = (
+            "https://ghe.example.test/acme/widget/issues/42/extra",
+            "https://ghe.example.test/acme/widget/issues/42?view=full",
+            "https://ghe.example.test/acme/widget/issues/42#discussion",
+            "https://user@ghe.example.test/acme/widget/issues/42",
+            "https://ghe.example.test:443/acme/widget/issues/42",
+            "https://ghe.example.test/acme/widget.evil/issues/42",
+        )
+
+        for invalid_url in invalid_urls:
+            with self.subTest(invalid_url=invalid_url):
+                self.environment["GH_CREATE_STDOUT"] = f"{invalid_url}\n"
+                result = self.issue_create(
+                    "create", self.body_file, "bug", token=token, check=False
+                )
+                self.assertEqual(30, result.returncode)
+                self.assertIn(
+                    "ISSUE_CREATE_OUTCOME:created_response_unvalidated",
+                    result.stderr,
+                )
+
+    def test_canonical_url_treats_validated_host_and_repo_as_literals(self) -> None:
+        host = "ghe-1.example.test"
+        repo = "acme.team/widget.repo"
+        token = self.preview_token("bug", host=host, repo=repo)
+        self.environment["GH_CREATE_STDOUT"] = f"https://{host}/{repo}/issues/42\n"
+
+        result = self.issue_create(
+            "create",
+            self.body_file,
+            "bug",
+            token=token,
+            host=host,
+            repo=repo,
+        )
+
+        self.assertEqual(f"https://{host}/{repo}/issues/42", result.stdout.strip())
+        call = self.transcript()[0]
+        self.assertEqual(host, call["host"])
+        self.assertIn(repo, call["argv"])
 
     def test_nonzero_gh_exit_reports_unknown_outcome_and_preserves_response(
         self,
@@ -560,6 +705,10 @@ os.execv(real_git, [real_git, *argv])
 
         self.assertEqual(31, result.returncode)
         self.assertIn("ISSUE_CREATE_OUTCOME:unknown", result.stderr)
+        self.assertIn(
+            "ISSUE_CREATE_VERIFY_TARGET:ghe.example.test/acme/widget", result.stderr
+        )
+        self.assertIn("ISSUE_CREATE_RETRY:blocked", result.stderr)
         self.assertNotIn("\x1b", result.stderr)
         stderr_capture = self.response_capture(result.stderr, "stderr")
         self.assertEqual(
@@ -680,6 +829,8 @@ class CreateIssueSkillContractTests(unittest.TestCase):
         self.assertIn("do not retry", text)
         self.assertIn('gh_host="$github_host"', text)
         self.assertIn('--repo "$issue_repo"', text)
+        self.assertIn("exact canonical issue url", text)
+        self.assertIn("signal", text)
 
 
 if __name__ == "__main__":

@@ -91,6 +91,17 @@ conservatively:
 - `ISSUE_CREATE_OUTCOME:unknown` means the create request was invoked but the
   client returned nonzero, so server-side creation cannot be disproved.
 
+The helper accepts only the exact canonical issue URL
+`https://HOST/OWNER/REPO/issues/<positive-integer>` for the validated host and
+repository. Extra path segments, query strings, fragments, user information,
+ports, or lookalike repository names produce `created_response_unvalidated`.
+
+Treat the helper's mutation boundary as authoritative. A signal before that
+boundary is `confirmed_not_created`; a signal from the boundary through URL
+validation and complete success output is `unknown`. Do not infer success from
+a partial URL on stdout. For every post-write stop, use the emitted
+`ISSUE_CREATE_VERIFY_TARGET` and `ISSUE_CREATE_RETRY:blocked...` markers.
+
 For either post-write outcome, do not retry. Keep the helper's private mode-0600
 stdout/stderr captures local and do not print or share raw response bytes. First
 perform host- and repository-pinned read-only verification, for example:
