@@ -44,14 +44,20 @@ lookup() {
     fail "PR_REPO must be an owner/name identity"
   [ -n "$HEAD_SELECTOR" ] || fail "pull-request head selector is empty"
 
-  PR_MATCHES=$(gh api --hostname "$GITHUB_HOST" --method GET \
+  PR_PAGES=$(gh api --hostname "$GITHUB_HOST" --method GET \
     "repos/$PR_REPO/pulls" \
     -f state=open \
     -f "head=$HEAD_SELECTOR" \
     -f per_page=100 \
-    --paginate --slurp --jq 'add') || {
+    --paginate --slurp) || {
     fail "pull-request lookup failed for $PR_REPO head $HEAD_SELECTOR"
   }
+  PR_MATCHES=$(printf '%s' "$PR_PAGES" | jq -ce '
+    if type == "array" and all(.[]; type == "array")
+    then add
+    else error("malformed paginated response")
+    end
+  ') || fail "malformed pull-request response for $PR_REPO head $HEAD_SELECTOR"
 
   if ! printf '%s' "$PR_MATCHES" | jq -e '
     type == "array" and

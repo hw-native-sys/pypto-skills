@@ -50,7 +50,9 @@ The helper uses the supported, host-pinned REST request:
 ```text
 gh api --hostname "$GITHUB_HOST" --method GET \
   "repos/$PR_REPO/pulls" -f state=open -f "head=$HEAD_SELECTOR" \
-  -f per_page=100 --paginate --slurp --jq 'add'
+  -f per_page=100 --paginate --slurp
+# Aggregate the returned page array separately with `jq -e 'add'`; `gh api`
+# rejects combining `--slurp` with `--jq`.
 ```
 
 It validates the combined response and fails closed on malformed, failed, or

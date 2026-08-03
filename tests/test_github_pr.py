@@ -42,9 +42,21 @@ import json
 import os
 import sys
 
+arguments = sys.argv[1:]
 with open(os.environ["GH_LOG"], "w", encoding="utf-8") as stream:
-    json.dump(sys.argv[1:], stream)
-sys.stdout.write(os.environ.get("FAKE_GH_RESPONSE", "[]"))
+    json.dump(arguments, stream)
+if "--slurp" in arguments and ("--jq" in arguments or "--template" in arguments):
+    sys.stderr.write(
+        "the `--slurp` option is not supported with `--jq` or `--template`\\n"
+    )
+    raise SystemExit(2)
+response = os.environ.get("FAKE_GH_RESPONSE", "[]")
+if "--slurp" in arguments:
+    try:
+        response = json.dumps([json.loads(response)])
+    except json.JSONDecodeError:
+        pass
+sys.stdout.write(response)
 raise SystemExit(int(os.environ.get("FAKE_GH_EXIT", "0")))
 """,
             encoding="utf-8",
@@ -120,8 +132,6 @@ raise SystemExit(int(os.environ.get("FAKE_GH_EXIT", "0")))
                 "per_page=100",
                 "--paginate",
                 "--slurp",
-                "--jq",
-                "add",
             ],
             json.loads(self.gh_log.read_text(encoding="utf-8")),
         )

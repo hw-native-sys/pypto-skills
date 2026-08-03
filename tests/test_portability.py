@@ -419,13 +419,17 @@ class PortabilityTests(unittest.TestCase):
             )
             self.assertIn('"repos/$PR_REPO/pulls"', document_text)
             self.assertIn('-f "head=$HEAD_SELECTOR"', document_text)
-            self.assertIn("--paginate --slurp --jq 'add'", document_text)
+            self.assertIn("--paginate --slurp", document_text)
+            self.assertIn("separately with `jq -e 'add'`", document_text)
+            self.assertNotIn("--slurp --jq", document_text)
         self.assertNotRegex(bash_source(skill), r"gh pr list[\s\S]{0,200}--head")
         self.assertNotRegex(reference_text, r"gh pr list[\s\S]{0,200}--head")
         self.assertIn('gh api --hostname "$GITHUB_HOST" --method GET', helper_text)
         self.assertIn('"repos/$PR_REPO/pulls"', helper_text)
         self.assertIn('-f "head=$HEAD_SELECTOR"', helper_text)
-        self.assertIn("--paginate --slurp --jq 'add'", helper_text)
+        self.assertIn("--paginate --slurp", helper_text)
+        self.assertIn("| jq -ce '", helper_text)
+        self.assertNotIn("--slurp --jq", helper_text)
 
     def test_pull_request_creation_uses_host_pinned_rest_post(self) -> None:
         skill = ROOT / "skills/github-pr/SKILL.md"

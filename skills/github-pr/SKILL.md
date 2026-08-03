@@ -32,7 +32,8 @@ Run lookup's host-pinned, exact fork-owner/head query:
 ```text
 gh api --hostname "$GITHUB_HOST" --method GET \
   "repos/$PR_REPO/pulls" -f state=open -f "head=$HEAD_SELECTOR" \
-  -f per_page=100 --paginate --slurp --jq 'add'
+  -f per_page=100 --paginate --slurp
+# Aggregate pages separately with `jq -e 'add'`; `gh api` rejects combining them.
 ```
 
 ```bash
