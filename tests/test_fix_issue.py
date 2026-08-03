@@ -38,6 +38,7 @@ class FixIssuePreflightTests(unittest.TestCase):
                 "GH_ISSUE_ASSIGNEE": "maintainer",
                 "GH_PROJECT_STATUS": "",
                 "GH_LINKED_PR_STATE": "",
+                "GH_SECOND_READ_ENABLED": "0",
             }
         )
 
@@ -50,12 +51,18 @@ import os
 import sys
 
 argv = sys.argv[1:]
+transcript_path = os.environ["GH_TRANSCRIPT"]
+try:
+    with open(transcript_path, encoding="utf-8") as existing_transcript:
+        call_number = sum(1 for _line in existing_transcript) + 1
+except FileNotFoundError:
+    call_number = 1
 is_write = (
     argv[:2] in (["issue", "edit"], ["issue", "create"])
     or "--method" in argv and argv[argv.index("--method") + 1] != "GET"
     or any("mutation" in argument.lower() for argument in argv)
 )
-with open(os.environ["GH_TRANSCRIPT"], "a", encoding="utf-8") as transcript:
+with open(transcript_path, "a", encoding="utf-8") as transcript:
     transcript.write(json.dumps({
         "argv": argv,
         "host": os.environ.get("GH_HOST", ""),
@@ -66,14 +73,23 @@ if argv[:2] != ["issue", "view"] or "27" not in argv:
     sys.stderr.write(f"unexpected gh invocation: {argv!r}\\n")
     raise SystemExit(91)
 
-assignee = os.environ.get("GH_ISSUE_ASSIGNEE", "")
-project_status = os.environ.get("GH_PROJECT_STATUS", "")
-linked_state = os.environ.get("GH_LINKED_PR_STATE", "")
+use_second_read = (
+    call_number >= 2 and os.environ.get("GH_SECOND_READ_ENABLED") == "1"
+)
+
+def response_value(name):
+    if use_second_read:
+        return os.environ.get(f"GH_SECOND_{name}", os.environ.get(f"GH_{name}", ""))
+    return os.environ.get(f"GH_{name}", "")
+
+assignee = response_value("ISSUE_ASSIGNEE")
+project_status = response_value("PROJECT_STATUS")
+linked_state = response_value("LINKED_PR_STATE")
 print(json.dumps({
     "number": 27,
     "title": "Allocator regression",
     "body": "Allocator reuse fails.",
-    "state": os.environ.get("GH_ISSUE_STATE", "OPEN"),
+    "state": response_value("ISSUE_STATE") or "OPEN",
     "labels": [{"name": "bug"}],
     "assignees": [{"login": assignee}] if assignee else [],
     "url": "https://ghe.example.test/acme/widget/issues/27",
@@ -136,6 +152,24 @@ print(json.dumps({
             }
         )
 
+    def configure_second_read(
+        self,
+        *,
+        state: str | None = None,
+        assignee: str | None = None,
+        project_status: str | None = None,
+        linked_pr_state: str | None = None,
+    ) -> None:
+        self.environment["GH_SECOND_READ_ENABLED"] = "1"
+        for name, value in (
+            ("ISSUE_STATE", state),
+            ("ISSUE_ASSIGNEE", assignee),
+            ("PROJECT_STATUS", project_status),
+            ("LINKED_PR_STATE", linked_pr_state),
+        ):
+            if value is not None:
+                self.environment[f"GH_SECOND_{name}"] = value
+
     def test_assigned_issue_preflight_stops_without_a_write(self) -> None:
         result = self.context(
             "fix-preflight", "ghe.example.test", "acme/widget", "27", check=False
@@ -156,6 +190,8 @@ print(json.dumps({
             "acme/widget",
             "27",
             "--allow-conflict",
+            "--approved-conflicts-json",
+            '["closed","assigned"]',
             check=False,
         )
 
@@ -258,8 +294,15 @@ print(json.dumps({
             {"linked_pr_state": "OPEN"},
         )
         options = ((), ("--in-progress-status", "doing"), ())
+        approved_sets = (
+            '["assigned"]',
+            '["in_progress"]',
+            '["active_pull_request"]',
+        )
 
-        for issue, extra_options in zip(scenarios, options, strict=True):
+        for issue, extra_options, approved_set in zip(
+            scenarios, options, approved_sets, strict=True
+        ):
             with self.subTest(issue=issue):
                 self.configure_issue(**issue)
                 result = self.context(
@@ -269,6 +312,8 @@ print(json.dumps({
                     "27",
                     *extra_options,
                     "--allow-conflict",
+                    "--approved-conflicts-json",
+                    approved_set,
                     check=False,
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
@@ -292,7 +337,14 @@ print(json.dumps({
         )
 
         blocked = self.context(*arguments, check=False)
-        allowed = self.context(*arguments, "--allow-conflict", check=False)
+        approved_conflicts = '["assigned","in_progress","active_pull_request"]'
+        allowed = self.context(
+            *arguments,
+            "--allow-conflict",
+            "--approved-conflicts-json",
+            approved_conflicts,
+            check=False,
+        )
 
         self.assertEqual(21, blocked.returncode)
         self.assertEqual(0, allowed.returncode, allowed.stderr)
@@ -312,6 +364,117 @@ print(json.dumps({
         self.assertTrue(all(call["operation"] == "read" for call in calls))
         self.assertTrue(all(call["host"] == "ghe.example.test" for call in calls))
         self.assertTrue(all("acme/widget" in call["argv"] for call in calls))
+
+    def test_override_rejects_conflict_set_changed_after_approval(self) -> None:
+        self.configure_issue(assignee="maintainer")
+        self.configure_second_read(linked_pr_state="OPEN")
+        arguments = (
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+        )
+
+        initial = self.context(*arguments, check=False)
+        override = self.context(
+            *arguments,
+            "--allow-conflict",
+            "--approved-conflicts-json",
+            '["assigned"]',
+            check=False,
+        )
+
+        self.assertEqual(21, initial.returncode)
+        self.assertEqual(21, override.returncode)
+        self.assertEqual(["assigned"], json.loads(initial.stdout)["conflicts"])
+        self.assertEqual(
+            ["assigned", "active_pull_request"],
+            json.loads(override.stdout)["conflicts"],
+        )
+        calls = self.transcript()
+        self.assertEqual(2, len(calls))
+        self.assertTrue(all(call["operation"] == "read" for call in calls))
+        self.assertTrue(all(call["host"] == "ghe.example.test" for call in calls))
+        self.assertTrue(all("acme/widget" in call["argv"] for call in calls))
+
+    def test_override_fails_safely_when_approved_conflict_disappears(self) -> None:
+        self.configure_issue(assignee="maintainer")
+        self.configure_second_read(assignee="")
+        arguments = (
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+        )
+
+        initial = self.context(*arguments, check=False)
+        override = self.context(
+            *arguments,
+            "--allow-conflict",
+            "--approved-conflicts-json",
+            '[ "assigned" ]',
+            check=False,
+        )
+
+        self.assertEqual(21, initial.returncode)
+        self.assertEqual(1, override.returncode)
+        self.assertEqual([], json.loads(override.stdout)["conflicts"])
+        calls = self.transcript()
+        self.assertEqual(2, len(calls))
+        self.assertTrue(all(call["operation"] == "read" for call in calls))
+        self.assertTrue(all(call["host"] == "ghe.example.test" for call in calls))
+        self.assertTrue(all("acme/widget" in call["argv"] for call in calls))
+
+    def test_override_rejects_invalid_approved_conflict_sets_before_read(
+        self,
+    ) -> None:
+        invalid_sets = (
+            "not-json",
+            '{"assigned":true}',
+            "[]",
+            '["assigned","assigned"]',
+            '["unknown"]',
+            '["active_pull_request","assigned"]',
+        )
+
+        for approved_set in invalid_sets:
+            with self.subTest(approved_set=approved_set):
+                result = self.context(
+                    "fix-preflight",
+                    "ghe.example.test",
+                    "acme/widget",
+                    "27",
+                    "--allow-conflict",
+                    "--approved-conflicts-json",
+                    approved_set,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+
+        self.assertEqual([], self.transcript())
+
+    def test_approved_conflicts_option_requires_override_mode(self) -> None:
+        missing_set = self.context(
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--allow-conflict",
+            check=False,
+        )
+        without_override = self.context(
+            "fix-preflight",
+            "ghe.example.test",
+            "acme/widget",
+            "27",
+            "--approved-conflicts-json",
+            '["assigned"]',
+            check=False,
+        )
+
+        self.assertEqual(2, missing_set.returncode)
+        self.assertEqual(2, without_override.returncode)
+        self.assertEqual([], self.transcript())
 
 
 class FixIssueSkillContractTests(unittest.TestCase):
@@ -363,7 +526,9 @@ class FixIssueSkillContractTests(unittest.TestCase):
             with self.subTest(conflict=conflict):
                 self.assertIn(conflict, text)
         self.assertIn("explicit approval for each conflict", text)
-        self.assertRegex(text, r"exactly\s+matches the approved conflict set")
+        self.assertIn("only for an exact match", text)
+        self.assertIn("--approved-conflicts-json", text)
+        self.assertIn("authoritative override read", text)
 
 
 if __name__ == "__main__":

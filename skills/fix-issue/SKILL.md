@@ -65,11 +65,24 @@ Make the design concrete enough to approve before changing a file.
 
 Wait for explicit approval of the implementation design. If preflight reported
 any conflict, also require explicit approval for each conflict in the emitted
-array. Design approval alone does not resolve them. Immediately before override,
-rerun preflight without `--allow-conflict` and confirm the new array exactly
-matches the approved conflict set. If it differs, show every current conflict
-and obtain fresh approval for each. Only then rerun with `--allow-conflict`;
-stop unconditionally when `closed` is present or exit `20` is returned.
+array. Design approval alone does not resolve them. Preserve the exact approved
+array as compact JSON; do not reconstruct it from the primary exit.
+
+Pass that array to the authoritative override read:
+
+```bash
+"$ISSUE_CONTEXT_HELPER" fix-preflight "$GITHUB_HOST" "$ISSUE_REPO" \
+  "$ISSUE_NUMBER" --in-progress-status "$REPOSITORY_IN_PROGRESS_VALUE" \
+  --allow-conflict --approved-conflicts-json "$APPROVED_CONFLICTS_JSON"
+```
+
+Omit `--in-progress-status` only when policy supplied no value. The helper
+compares the newly read ordered array with the approved JSON and returns `0`
+only for an exact match whose primary conflict is `21`, `22`, or `23`. Exit
+`20`, `21`, `22`, or `23` from this read is non-success: show the authoritative
+new record and obtain fresh approval for every current conflict before another
+attempt. A changed set that became clean also fails safely rather than returning
+`0`. Stop unconditionally when `closed` is present or exit `20` is returned.
 
 ## Optionally claim and update status
 

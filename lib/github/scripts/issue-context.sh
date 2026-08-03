@@ -16,7 +16,7 @@ Usage:
   issue-context.sh repository
   issue-context.sh search HOST REPO QUERY
   issue-context.sh templates HOST REPO
-  issue-context.sh fix-preflight HOST REPO NUMBER [--in-progress-status STATUS] [--allow-conflict]
+  issue-context.sh fix-preflight HOST REPO NUMBER [--in-progress-status STATUS] [--allow-conflict --approved-conflicts-json JSON]
 EOF
   exit 2
 }
@@ -243,6 +243,8 @@ fix_preflight() {
   [ "$#" -ge 3 ] || usage
   local host=$1 repo=$2 number=$3
   local in_progress_status="" allow_conflict=0 response record conflict=0
+  local approved_conflicts_json="" approved_conflicts_canonical=""
+  local approved_conflicts_set=0 current_conflicts
   shift 3
 
   validate_host "$host" || fail "invalid GitHub host: $host"
@@ -263,9 +265,41 @@ fix_preflight() {
         allow_conflict=1
         shift
         ;;
+      --approved-conflicts-json)
+        [ "$#" -ge 2 ] || usage
+        [ "$approved_conflicts_set" -eq 0 ] || usage
+        approved_conflicts_json=$2
+        approved_conflicts_set=1
+        shift 2
+        ;;
       *) usage ;;
     esac
   done
+
+  if [ "$allow_conflict" -eq 1 ]; then
+    [ "$approved_conflicts_set" -eq 1 ] || usage
+  else
+    [ "$approved_conflicts_set" -eq 0 ] || usage
+  fi
+  if [ "$approved_conflicts_set" -eq 1 ]; then
+    approved_conflicts_canonical=$(printf '%s' "$approved_conflicts_json" |
+      jq -ce '
+        def conflict_rank:
+          if . == "closed" then 0
+          elif . == "assigned" then 1
+          elif . == "in_progress" then 2
+          elif . == "active_pull_request" then 3
+          else 99 end;
+        if type == "array" and length > 0 and
+           all(.[]; type == "string") and
+           all(.[]; . as $conflict |
+             (["closed", "assigned", "in_progress", "active_pull_request"] |
+              index($conflict)) != null) and
+           length == (unique | length) and
+           . == sort_by(conflict_rank)
+        then . else error("invalid approved conflict set") end') ||
+      fail "approved conflicts must be a nonempty, known, unique, ordered JSON array"
+  fi
 
   response=$(GH_HOST="$host" gh issue view "$number" --repo "$repo" \
     --json number,title,body,state,labels,assignees,url,projectItems,closedByPullRequestsReferences) ||
@@ -350,8 +384,18 @@ fix_preflight() {
     else 0 end') ||
     fail "issue preflight primary classification failed for $host/$repo#$number"
 
-  if [ "$allow_conflict" -eq 1 ] && [ "$conflict" -ge 21 ]; then
-    return 0
+  if [ "$allow_conflict" -eq 1 ]; then
+    current_conflicts=$(printf '%s' "$record" | jq -c '.conflicts') ||
+      fail "issue preflight conflict set could not be compared"
+    if [ "$current_conflicts" != "$approved_conflicts_canonical" ]; then
+      if [ "$conflict" -eq 0 ]; then
+        fail "approved conflicts no longer match the current clean issue"
+      fi
+      return "$conflict"
+    fi
+    if [ "$conflict" -ge 21 ] && [ "$conflict" -le 23 ]; then
+      return 0
+    fi
   fi
   return "$conflict"
 }
