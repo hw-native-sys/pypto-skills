@@ -34,7 +34,8 @@ for path in "$@"; do
             fail 2 "invalid/non-exact repo-relative path: $path"
             ;;
     esac
-    [ ! -d "$path" ] || fail 2 "directory path is not allowed: $path"
+    [ ! -d "$path" ] || [ -L "$path" ] || \
+        fail 2 "directory path is not allowed: $path"
     if [[ -n ${authorized["$path"]+present} ]]; then
         fail 2 "duplicate authorized path: $path"
     fi

@@ -4,14 +4,18 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = ROOT / "skills"
+PLUGINS = ROOT / "plugins"
+DEVELOPER_PLUGIN = PLUGINS / "pypto-developer"
+USER_PLUGIN = PLUGINS / "pypto-user"
+SKILLS = DEVELOPER_PLUGIN / "skills"
+USER_SKILLS = USER_PLUGIN / "skills"
 LINK_RE = re.compile(r"(?<!!)\[[^]]+\]\(([^)#]+)(?:#[^)]+)?\)")
 
 
-def skill_dirs() -> list[Path]:
-    if not SKILLS.is_dir():
+def skill_dirs(skills_root: Path = SKILLS) -> list[Path]:
+    if not skills_root.is_dir():
         return []
-    return sorted(path for path in SKILLS.iterdir() if path.is_dir())
+    return sorted(path for path in skills_root.iterdir() if path.is_dir())
 
 
 def frontmatter(path: Path) -> dict[str, str]:

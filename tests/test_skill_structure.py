@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from tests.skill_assertions import SKILLS, frontmatter, markdown_links, skill_dirs
+from tests.skill_assertions import (
+    SKILLS,
+    USER_SKILLS,
+    frontmatter,
+    markdown_links,
+    skill_dirs,
+)
 
 EXPECTED_SKILLS: tuple[str, ...] = (
     "auto-pr",
@@ -12,6 +18,11 @@ EXPECTED_SKILLS: tuple[str, ...] = (
     "fix-pr",
     "git-commit",
     "github-pr",
+)
+
+EXPECTED_USER_SKILLS: tuple[str, ...] = (
+    "generate-ir-trace",
+    "incore-profiling",
 )
 
 
@@ -48,6 +59,28 @@ class SkillStructureTests(unittest.TestCase):
             with self.subTest(skill=name):
                 skill_markdown = SKILLS / name / "SKILL.md"
                 self.assertTrue(skill_markdown.is_file())
+                for target in markdown_links(skill_markdown):
+                    self.assertTrue(target.exists())
+
+    def test_expected_user_skill_directories_exist(self) -> None:
+        available = {path.name for path in skill_dirs(USER_SKILLS)}
+
+        for name in EXPECTED_USER_SKILLS:
+            with self.subTest(skill=name):
+                self.assertIn(name, available)
+
+    def test_expected_user_skills_have_valid_structure(self) -> None:
+        for name in EXPECTED_USER_SKILLS:
+            with self.subTest(skill=name):
+                skill_markdown = USER_SKILLS / name / "SKILL.md"
+                self.assertTrue(skill_markdown.is_file())
+                metadata = frontmatter(skill_markdown)
+                self.assertEqual({"name", "description"}, set(metadata))
+                self.assertEqual(name, metadata["name"])
+                self.assertTrue(metadata["description"].startswith("Use when"))
+                self.assertTrue(
+                    (USER_SKILLS / name / "agents" / "openai.yaml").is_file()
+                )
                 for target in markdown_links(skill_markdown):
                     self.assertTrue(target.exists())
 

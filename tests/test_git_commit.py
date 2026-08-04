@@ -125,6 +125,31 @@ class StageOwnedBehaviorTests(unittest.TestCase):
             "?? scratch.txt", self.git("status", "--porcelain").stdout.splitlines()
         )
 
+    def test_stage_helper_accepts_an_explicit_directory_symlink(self) -> None:
+        target = self.work / "owned-target"
+        target.mkdir()
+        (target / "content.txt").write_text("target\n", encoding="utf-8")
+        (self.work / "owned-link").symlink_to("owned-target", target_is_directory=True)
+
+        result = self.helper("owned-link")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            "120000",
+            self.git("ls-files", "--stage", "owned-link").stdout.split()[0],
+        )
+
+    def test_stage_helper_still_rejects_a_real_directory(self) -> None:
+        (self.work / "owned-directory").mkdir()
+        (self.work / "owned-directory" / "content.txt").write_text(
+            "content\n", encoding="utf-8"
+        )
+
+        result = self.helper("owned-directory", check=False)
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("directory path is not allowed", result.stderr)
+
     def test_stage_helper_rejects_an_unrelated_pre_staged_path(self) -> None:
         self.git("add", "notes.txt")
         result = self.helper("changed.txt", check=False)

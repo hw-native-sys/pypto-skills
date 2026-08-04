@@ -1,0 +1,22 @@
+{
+  "name": "pypto-user",
+  "version": "0.1.0",
+  "description": "Reusable PyPTO inspection and profiling workflows",
+  "author": {
+    "name": "hw-native-sys",
+    "url": "https://github.com/hw-native-sys"
+  },
+  "homepage": "https://github.com/hw-native-sys/pypto-skills",
+  "repository": "https://github.com/hw-native-sys/pypto-skills",
+  "keywords": ["pypto", "profiling", "ir", "trace"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "PyPTO User",
+    "shortDescription": "Inspect PyPTO IR and profile generated kernels.",
+    "longDescription": "User-facing PyPTO workflows shared across repositories for generating interactive IR traces and collecting cycle-level in-core profiles.",
+    "developerName": "hw-native-sys",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "defaultPrompt": "Inspect this PyPTO case and generate the appropriate trace."
+  }
+}

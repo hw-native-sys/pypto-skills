@@ -4,7 +4,7 @@ import re
 import unittest
 from pathlib import Path
 
-from tests.skill_assertions import ROOT
+from tests.skill_assertions import DEVELOPER_PLUGIN, ROOT, USER_PLUGIN
 
 BANNED_TEXT = (
     "hw-native-sys/pypto",
@@ -17,7 +17,11 @@ BANNED_TEXT = (
     "Task tool",
 )
 
-DEPLOYABLE_ROOTS = (ROOT / "skills", ROOT / "lib")
+DEPLOYABLE_ROOTS = (
+    DEVELOPER_PLUGIN / "skills",
+    DEVELOPER_PLUGIN / "lib",
+    USER_PLUGIN / "skills",
+)
 
 REQUIRED_GITHUB_REFERENCES = (
     ROOT / "lib/github/setup.md",
