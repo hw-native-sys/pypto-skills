@@ -34,8 +34,12 @@ for path in "$@"; do
             fail 2 "invalid/non-exact repo-relative path: $path"
             ;;
     esac
-    [ ! -d "$path" ] || [ -L "$path" ] || \
-        fail 2 "directory path is not allowed: $path"
+    if [ -d "$path" ] && [ ! -L "$path" ]; then
+        path_mode=$(git ls-files --stage -- "$path")
+        path_mode=${path_mode%% *}
+        [ "$path_mode" = 160000 ] || \
+            fail 2 "directory path is not allowed: $path"
+    fi
     if [[ -n ${authorized["$path"]+present} ]]; then
         fail 2 "duplicate authorized path: $path"
     fi

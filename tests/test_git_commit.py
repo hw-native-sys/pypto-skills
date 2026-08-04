@@ -150,6 +150,38 @@ class StageOwnedBehaviorTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("directory path is not allowed", result.stderr)
 
+    def test_stage_helper_accepts_an_explicit_tracked_submodule(self) -> None:
+        source = self.work.parent / "submodule-source"
+        run("git", "init", "--initial-branch=trunk", source, cwd=self.work.parent)
+        run("git", "config", "user.email", "portable@example.com", cwd=source)
+        run("git", "config", "user.name", "Portable Tests", cwd=source)
+        (source / "version.txt").write_text("one\n", encoding="utf-8")
+        run("git", "add", "version.txt", cwd=source)
+        run("git", "commit", "-m", "initial", cwd=source)
+
+        self.git(
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            str(source),
+            "vendor",
+        )
+        self.git("commit", "-m", "add submodule")
+
+        (source / "version.txt").write_text("two\n", encoding="utf-8")
+        run("git", "commit", "-am", "update", cwd=source)
+        run("git", "fetch", cwd=self.work / "vendor")
+        run("git", "checkout", "FETCH_HEAD", cwd=self.work / "vendor")
+
+        result = self.helper("vendor")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            run("git", "rev-parse", "HEAD", cwd=source).stdout.strip(),
+            self.git("rev-parse", ":vendor").stdout.strip(),
+        )
+
     def test_stage_helper_rejects_an_unrelated_pre_staged_path(self) -> None:
         self.git("add", "notes.txt")
         result = self.helper("changed.txt", check=False)
