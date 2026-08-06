@@ -40,10 +40,7 @@ gh api --hostname "$GITHUB_HOST" --method GET \
 PR_ROUTE=$(printf '%s' "$PR_LOOKUP_RESULT" | jq -r '.route')
 case "$PR_ROUTE" in
   create|update) ;;
-  *)
-    echo "Error: unsupported pull-request route: $PR_ROUTE" >&2
-    exit 1
-    ;;
+  *) echo "Error: unsupported pull-request route: $PR_ROUTE" >&2; exit 1 ;;
 esac
 ```
 
@@ -98,11 +95,11 @@ COMMITS_AHEAD=$(git rev-list --count "$BASE_REF"..HEAD) || {
 Rerun this exact block after commit. Never put either substitution inside `test` or `[ ]`; that hides the Git command's failure status.
 
 For the create route, if `CURRENT_BRANCH` equals `DEFAULT_BRANCH`, or has no
-commits ahead but has uncommitted work, obtain a user-approved
-`BRANCH_SUMMARY` and any repository-required `BRANCH_PREFIX`; then read and run
-[branch naming](../../lib/github/branch-naming.md). Never invent a prefix. Only
-after its checkout succeeds, set `PR_HEAD_BRANCH="$CURRENT_BRANCH"` and
-`HEAD_REPO="$LOCAL_REPO"`.
+commits ahead but has uncommitted work, obtain `BRANCH_SUMMARY` and any
+repository-required `BRANCH_PREFIX`, then read and run [branch
+naming](../../lib/github/branch-naming.md), which defines when that summary
+needs explicit approval. Never invent a prefix. Only after its checkout
+succeeds, set `PR_HEAD_BRANCH="$CURRENT_BRANCH"` and `HEAD_REPO="$LOCAL_REPO"`.
 
 ## Capture push authority before commit work
 
@@ -129,21 +126,23 @@ refuses a mismatched `HEAD` or a dirty worktree, and fails when validation
 leaves artifacts behind. Shared `prepare` derives rewrite state from the fresh
 remote OID, and `push` uses explicit `--force-with-lease` when needed.
 
-One function/subshell invocation is one transaction: it captures the remote
-head before mutation and keeps readonly authority scoped inside that
-invocation. A failed runner, changed `HEAD`, conflict, or later fix iteration
-must start a fresh transaction and recapture all identities, OIDs, and rewrite
-state. Never reuse a lease or prepared value. Resolve conflicts under
-repository policy or use `git rebase --abort`; never destructively reset work.
+One function/subshell invocation is one transaction, with readonly authority
+scoped inside it. A failed runner, changed `HEAD`, conflict, or later fix
+iteration must start a fresh transaction and recapture all identities, OIDs,
+and rewrite state. Never reuse a lease or prepared value. Resolve conflicts
+under repository policy or `git rebase --abort`; never destructively reset work.
 
 ## Create or update the pull request
 
-Derive both title and body only from the post-rebase PR commit range:
+Derive title and body only from the post-rebase PR commit range. `PR_RANGE`
+below is the message evidence for [PR
+description](../../lib/github/pr-description.md), which composes and validates
+both and owns `PR_BODY`; a bare commit-subject list is not a description.
 
 ```bash
+PR_RANGE=$(git log --reverse --format='%H%n%s%n%b' "$BASE_REF"..HEAD)
 PR_TITLE=$(git log --reverse --format='%s' "$BASE_REF"..HEAD | sed -n '1p')
-PR_BODY=$(git log --reverse --format='- %s' "$BASE_REF"..HEAD)
-if [ -z "$PR_TITLE" ] || [ -z "$PR_BODY" ]; then
+if [ -z "$PR_RANGE" ] || [ -z "$PR_TITLE" ]; then
   echo "Error: the pull-request commit range is empty" >&2
   exit 1
 fi
@@ -191,7 +190,8 @@ user did not supply.
 
 ## Report the result
 
-Return the exact push target and the PR URL, number, state, base, and head:
+Return the exact push target, whether the description was composed or
+preserved, and the PR URL, number, state, base, and head:
 
 ```bash
 GH_HOST="$GITHUB_HOST" gh pr view "${PR_NUMBER:-$PR_URL}" \

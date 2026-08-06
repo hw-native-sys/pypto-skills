@@ -209,30 +209,10 @@ else:
         fake_git.write_text(
             """#!/usr/bin/env python3
 import os
-import signal
-import subprocess
 import sys
 
 real_git = os.environ["TEST_REAL_GIT"]
-argv = sys.argv[1:]
-if argv and argv[0] == "hash-object" and os.environ.get("BLOCK_GIT_HASH_READY"):
-    with open(os.environ["BLOCK_GIT_HASH_READY"], "w", encoding="utf-8") as ready:
-        ready.write("ready")
-        ready.flush()
-        signal.pause()
-if argv and argv[0] == "hash-object" and os.environ.get("RACE_BODY_FILE"):
-    result = subprocess.run(
-        [real_git, *argv],
-        input=sys.stdin.buffer.read(),
-        check=False,
-        capture_output=True,
-    )
-    with open(os.environ["RACE_BODY_FILE"], "w", encoding="utf-8") as body:
-        body.write(os.environ["RACE_REPLACEMENT"])
-    sys.stdout.buffer.write(result.stdout)
-    sys.stderr.buffer.write(result.stderr)
-    raise SystemExit(result.returncode)
-os.execv(real_git, [real_git, *argv])
+os.execv(real_git, [real_git, *sys.argv[1:]])
 """,
             encoding="utf-8",
         )
@@ -243,12 +223,27 @@ os.execv(real_git, [real_git, *argv])
         fake_cat.write_text(
             """#!/usr/bin/env python3
 import os
+import signal
 import subprocess
 import sys
 
 real_cat = os.environ["TEST_REAL_CAT"]
 argv = sys.argv[1:]
 is_response_read = any("issue-create-response.stdout." in argument for argument in argv)
+is_snapshot_copy = any(argument.endswith("issue.md") for argument in argv)
+if is_snapshot_copy and os.environ.get("BLOCK_CAT_SNAPSHOT_READY"):
+    with open(os.environ["BLOCK_CAT_SNAPSHOT_READY"], "w", encoding="utf-8") as ready:
+        ready.write("ready")
+        ready.flush()
+        signal.pause()
+if is_snapshot_copy and os.environ.get("RACE_BODY_FILE"):
+    result = subprocess.run([real_cat, *argv], check=False, capture_output=True)
+    sys.stdout.buffer.write(result.stdout)
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.write(result.stderr)
+    with open(os.environ["RACE_BODY_FILE"], "w", encoding="utf-8") as body:
+        body.write(os.environ["RACE_REPLACEMENT"])
+    raise SystemExit(result.returncode)
 if is_response_read and os.environ.get("BLOCK_CAT_AFTER_RESPONSE_READY"):
     result = subprocess.run(
         [real_cat, *argv],
@@ -297,7 +292,6 @@ os.execv(real_cat, [real_cat, *argv])
         mode: str,
         body_file: Path,
         *labels: str,
-        token: str | None = None,
         title: str | None = None,
         host: str = "ghe.example.test",
         repo: str = "acme/widget",
@@ -314,8 +308,6 @@ os.execv(real_cat, [real_cat, *argv])
             self.title if title is None else title,
             str(body_file),
         ]
-        if token is not None:
-            arguments.append(token)
         arguments.extend(labels)
         result = subprocess.run(
             arguments,
@@ -328,20 +320,6 @@ os.execv(real_cat, [real_cat, *argv])
         if check and result.returncode != 0:
             self.fail(f"issue-create failed:\n{result.stdout}{result.stderr}")
         return result
-
-    def preview_token(
-        self,
-        *labels: str,
-        host: str = "ghe.example.test",
-        repo: str = "acme/widget",
-    ) -> str:
-        result = self.issue_create(
-            "preview", self.body_file, *labels, host=host, repo=repo
-        )
-        match = re.search(r"ISSUE_CREATE:([0-9a-f]{40,64})", result.stdout)
-        self.assertIsNotNone(match, result.stdout)
-        assert match is not None
-        return match.group(1)
 
     def test_repository_context_bootstraps_from_git_without_ambient_repo(self) -> None:
         result = self.context("repository")
@@ -513,32 +491,18 @@ os.execv(real_cat, [real_cat, *argv])
         )
         self.assertNotEqual(0, missing_repository.returncode)
 
-    def test_preview_renders_every_field_without_writing(self) -> None:
-        result = self.issue_create("preview", self.body_file, "bug")
-        self.assertIn("Host: ghe.example.test", result.stdout)
-        self.assertIn("Repository: acme/widget", result.stdout)
-        self.assertIn(f"Title: {self.title}", result.stdout)
-        self.assertIn("Labels (1):\n- 3:bug", result.stdout)
-        self.assertIn(self.body_file.read_text(encoding="utf-8"), result.stdout)
-        self.assertRegex(result.stdout, r"ISSUE_CREATE:[0-9a-f]{40,64}")
+    def test_create_is_the_only_route_and_takes_no_approval_token(self) -> None:
+        helper_source = CREATE_HELPER.read_text(encoding="utf-8")
+        self.assertNotIn("hash-object", helper_source)
+        self.assertNotIn("TOKEN", helper_source)
+        self.assertNotIn("ISSUE_CREATE:", helper_source)
+
+        preview = self.issue_create("preview", self.body_file, "bug", check=False)
+        self.assertEqual(2, preview.returncode)
+        self.assertIn("issue-create.sh create", preview.stderr)
         self.assertEqual([], self.transcript())
 
-    def test_preview_renders_multiple_labels_unambiguously(self) -> None:
-        result = self.issue_create("preview", self.body_file, "bug", "regression")
-
-        self.assertIn("Labels (2):\n- 3:bug\n- 10:regression", result.stdout)
-        self.assertEqual([], self.transcript())
-
-    def test_preview_distinguishes_a_comma_label_from_multiple_labels(self) -> None:
-        single = self.issue_create("preview", self.body_file, "bug, regression")
-        multiple = self.issue_create("preview", self.body_file, "bug", "regression")
-
-        self.assertIn("Labels (1):\n- 15:bug, regression", single.stdout)
-        self.assertIn("Labels (2):\n- 3:bug\n- 10:regression", multiple.stdout)
-        self.assertNotEqual(single.stdout, multiple.stdout)
-        self.assertEqual([], self.transcript())
-
-    def test_preview_rejects_control_characters_in_title_and_labels(self) -> None:
+    def test_create_rejects_control_characters_in_title_and_labels(self) -> None:
         cases = (
             {"title": "unsafe\ntitle", "labels": ("bug",)},
             {"title": self.title, "labels": ("bug\ttriage",)},
@@ -549,36 +513,29 @@ os.execv(real_cat, [real_cat, *argv])
         for case in cases:
             with self.subTest(case=case):
                 result = self.issue_create(
-                    "preview",
+                    "create",
                     self.body_file,
                     *case["labels"],
                     title=case["title"],
                     check=False,
                 )
                 self.assertNotEqual(0, result.returncode)
+                self.assertIn(
+                    "ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr
+                )
         self.assertEqual([], self.transcript())
 
-    def test_preview_displays_snapshot_when_source_changes_after_hash(self) -> None:
-        approved_body = self.body_file.read_text(encoding="utf-8")
-        replacement = "MUTATED AFTER PREVIEW SNAPSHOT\n"
-        self.environment["RACE_BODY_FILE"] = str(self.body_file)
-        self.environment["RACE_REPLACEMENT"] = replacement
+    def test_create_rejects_an_unreadable_or_empty_body_before_gh_write(self) -> None:
+        empty_body = self.temp_path / "empty.md"
+        empty_body.write_text("", encoding="utf-8")
 
-        result = self.issue_create("preview", self.body_file, "bug")
-
-        self.assertEqual(replacement, self.body_file.read_text(encoding="utf-8"))
-        self.assertIn(approved_body, result.stdout)
-        self.assertNotIn(replacement, result.stdout)
-        self.assertEqual([], self.transcript())
-
-    def test_create_rejects_changed_payload_before_gh_write(self) -> None:
-        token = self.preview_token("bug")
-        self.body_file.write_text("changed after approval\n", encoding="utf-8")
-        result = self.issue_create(
-            "create", self.body_file, "bug", token=token, check=False
-        )
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr)
+        for body_file in (empty_body, self.temp_path / "absent.md"):
+            with self.subTest(body_file=body_file.name):
+                result = self.issue_create("create", body_file, "bug", check=False)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(
+                    "ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr
+                )
         self.assertEqual([], self.transcript())
 
     def response_capture(self, stderr: str, stream: str) -> Path:
@@ -588,7 +545,7 @@ os.execv(real_cat, [real_cat, *argv])
         return Path(match.group(1))
 
     def interrupted_create(
-        self, token: str, coordination_variable: str
+        self, coordination_variable: str
     ) -> subprocess.CompletedProcess[str]:
         ready_path = self.temp_path / f"{coordination_variable}.fifo"
         os.mkfifo(ready_path, mode=0o600)
@@ -602,7 +559,6 @@ os.execv(real_cat, [real_cat, *argv])
                 "acme/widget",
                 self.title,
                 str(self.body_file),
-                token,
                 "bug",
             ],
             cwd=self.work,
@@ -621,9 +577,7 @@ os.execv(real_cat, [real_cat, *argv])
         )
 
     def test_signal_before_mutation_is_confirmed_not_created(self) -> None:
-        token = self.preview_token("bug")
-
-        result = self.interrupted_create(token, "BLOCK_GIT_HASH_READY")
+        result = self.interrupted_create("BLOCK_CAT_SNAPSHOT_READY")
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr)
@@ -631,9 +585,7 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertEqual([], self.transcript())
 
     def test_signal_after_response_before_output_is_unknown(self) -> None:
-        token = self.preview_token("bug")
-
-        result = self.interrupted_create(token, "BLOCK_GH_AFTER_RESPONSE_READY")
+        result = self.interrupted_create("BLOCK_GH_AFTER_RESPONSE_READY")
 
         self.assertEqual(31, result.returncode)
         self.assertEqual("", result.stdout)
@@ -652,7 +604,6 @@ os.execv(real_cat, [real_cat, *argv])
     def test_broken_success_stdout_reports_unknown_on_saved_diagnostic_fd(
         self,
     ) -> None:
-        token = self.preview_token("bug")
         ready_path = self.temp_path / "cat-ready.fifo"
         release_path = self.temp_path / "cat-release.fifo"
         os.mkfifo(ready_path, mode=0o600)
@@ -672,7 +623,6 @@ os.execv(real_cat, [real_cat, *argv])
                 "acme/widget",
                 self.title,
                 str(self.body_file),
-                token,
                 "bug",
             ],
             cwd=self.work,
@@ -707,13 +657,10 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
 
     def test_success_with_invalid_url_reports_created_but_unvalidated(self) -> None:
-        token = self.preview_token("bug")
         unsafe_response = "created\x1b-but-url-missing\n"
         self.environment["GH_CREATE_STDOUT"] = unsafe_response
 
-        result = self.issue_create(
-            "create", self.body_file, "bug", token=token, check=False
-        )
+        result = self.issue_create("create", self.body_file, "bug", check=False)
 
         self.assertEqual(30, result.returncode)
         self.assertIn(
@@ -725,14 +672,11 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertEqual(0o600, stdout_capture.stat().st_mode & 0o777)
 
     def test_extra_url_path_is_created_but_unvalidated(self) -> None:
-        token = self.preview_token("bug")
         self.environment["GH_CREATE_STDOUT"] = (
             "https://ghe.example.test/acme/widget/issues/not-an-issue/42\n"
         )
 
-        result = self.issue_create(
-            "create", self.body_file, "bug", token=token, check=False
-        )
+        result = self.issue_create("create", self.body_file, "bug", check=False)
 
         self.assertEqual(30, result.returncode)
         self.assertIn(
@@ -740,7 +684,6 @@ os.execv(real_cat, [real_cat, *argv])
         )
 
     def test_only_exact_canonical_issue_url_shape_is_accepted(self) -> None:
-        token = self.preview_token("bug")
         invalid_urls = (
             "https://ghe.example.test/acme/widget/issues/42/extra",
             "https://ghe.example.test/acme/widget/issues/42?view=full",
@@ -753,9 +696,7 @@ os.execv(real_cat, [real_cat, *argv])
         for invalid_url in invalid_urls:
             with self.subTest(invalid_url=invalid_url):
                 self.environment["GH_CREATE_STDOUT"] = f"{invalid_url}\n"
-                result = self.issue_create(
-                    "create", self.body_file, "bug", token=token, check=False
-                )
+                result = self.issue_create("create", self.body_file, "bug", check=False)
                 self.assertEqual(30, result.returncode)
                 self.assertIn(
                     "ISSUE_CREATE_OUTCOME:created_response_unvalidated",
@@ -765,14 +706,12 @@ os.execv(real_cat, [real_cat, *argv])
     def test_canonical_url_treats_validated_host_and_repo_as_literals(self) -> None:
         host = "ghe-1.example.test"
         repo = "acme.team/widget.repo"
-        token = self.preview_token("bug", host=host, repo=repo)
         self.environment["GH_CREATE_STDOUT"] = f"https://{host}/{repo}/issues/42\n"
 
         result = self.issue_create(
             "create",
             self.body_file,
             "bug",
-            token=token,
             host=host,
             repo=repo,
         )
@@ -785,7 +724,6 @@ os.execv(real_cat, [real_cat, *argv])
     def test_nonzero_gh_exit_reports_unknown_outcome_and_preserves_response(
         self,
     ) -> None:
-        token = self.preview_token("bug")
         self.environment.update(
             {
                 "GH_CREATE_STDOUT": "",
@@ -794,9 +732,7 @@ os.execv(real_cat, [real_cat, *argv])
             }
         )
 
-        result = self.issue_create(
-            "create", self.body_file, "bug", token=token, check=False
-        )
+        result = self.issue_create("create", self.body_file, "bug", check=False)
 
         self.assertEqual(31, result.returncode)
         self.assertIn("ISSUE_CREATE_OUTCOME:unknown", result.stderr)
@@ -816,10 +752,7 @@ os.execv(real_cat, [real_cat, *argv])
         self,
     ) -> None:
         approved_body = self.body_file.read_text(encoding="utf-8")
-        token = self.preview_token("bug", "regression")
-        result = self.issue_create(
-            "create", self.body_file, "bug", "regression", token=token
-        )
+        result = self.issue_create("create", self.body_file, "bug", "regression")
 
         self.assertEqual(
             "https://ghe.example.test/acme/widget/issues/42", result.stdout.strip()
@@ -850,14 +783,13 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertNotEqual(str(self.body_file), snapshot_path)
         self.assertFalse(Path(snapshot_path).exists())
 
-    def test_create_publishes_snapshot_when_source_changes_after_hash(self) -> None:
+    def test_create_publishes_snapshot_when_source_changes_after_copy(self) -> None:
         approved_body = self.body_file.read_text(encoding="utf-8")
-        token = self.preview_token("bug")
         replacement = "MUTATED AFTER CREATE SNAPSHOT\n"
         self.environment["RACE_BODY_FILE"] = str(self.body_file)
         self.environment["RACE_REPLACEMENT"] = replacement
 
-        result = self.issue_create("create", self.body_file, "bug", token=token)
+        result = self.issue_create("create", self.body_file, "bug")
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(replacement, self.body_file.read_text(encoding="utf-8"))
@@ -882,20 +814,32 @@ class CreateIssueSkillContractTests(unittest.TestCase):
         self.assertIn("applicable repository instructions", policy_block)
         self.assertIn("missing or conflicting required policy", policy_block)
 
-    def test_skill_orders_complete_preview_confirmation_and_create(self) -> None:
+    def test_skill_orders_complete_text_confirmation_and_create(self) -> None:
         self.assertTrue(SKILL.is_file(), f"missing skill: {SKILL}")
         text = SKILL.read_text(encoding="utf-8")
 
-        preview = text.find("## Preview the complete mutation")
+        shown = text.find("## Show the complete issue in text")
         confirmation = text.find("## Wait for explicit confirmation")
         create = text.find("## Create exactly the approved issue")
-        self.assertGreaterEqual(preview, 0)
-        self.assertGreater(confirmation, preview)
+        self.assertGreaterEqual(shown, 0)
+        self.assertGreater(confirmation, shown)
         self.assertGreater(create, confirmation)
-        preview_block = text[preview:confirmation]
-        for field in ("host", "repository", "title", "labels", "complete body"):
+        shown_block = text[shown:confirmation]
+        for field in ("host", "repository", "title", "label", "complete body"):
             with self.subTest(field=field):
-                self.assertIn(field, preview_block.lower())
+                self.assertIn(field, shown_block.lower())
+        self.assertIn("directly in the reply", shown_block)
+        self.assertIn("one label per line", shown_block.lower())
+
+    def test_skill_has_no_approval_token_step(self) -> None:
+        text = SKILL.read_text(encoding="utf-8")
+
+        self.assertNotIn("ISSUE_CREATE:", text)
+        self.assertNotIn("TOKEN", text)
+        self.assertNotIn("token", text.lower())
+        self.assertIn(
+            "scripts/issue-create.sh create HOST REPO TITLE\nBODY_FILE LABEL...", text
+        )
 
     def test_skill_requires_discovered_fields_and_open_closed_deduplication(
         self,
@@ -910,7 +854,7 @@ class CreateIssueSkillContractTests(unittest.TestCase):
         self.assertIn("open and closed", text.lower())
         self.assertIn("Related: #N", text)
         self.assertIn("stop only for `duplicate`", text.lower())
-        self.assertIn("Never invent or reconstruct the preview token", text)
+        self.assertIn("never present a draft that still holds a placeholder", text)
         self.assertIn("../../lib/github/scripts/issue-context.sh", text)
 
     def test_skill_requires_read_only_verification_before_retrying_unknown_outcome(

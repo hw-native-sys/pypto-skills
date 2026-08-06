@@ -166,6 +166,15 @@ feedback by its technical content, not the author: short human requests,
 out-of-diff findings, and bot comments with actionable items all require
 review.
 
+## An early fetch is provisional
+
+Reviewers post asynchronously, and automated reviewers commonly submit several
+minutes after a pull request is created or a new head is pushed. A fetch taken
+seconds after either event can only report what had already arrived, so treat
+it as provisional: an empty result then means "nothing yet", never "no
+feedback". Re-fetch all three surfaces after that settling period, and again
+whenever the head changes, before anyone treats the pull request as clean.
+
 ## Outputs needed by replies
 
 - Inline threads: thread `id`, comment `databaseId`, path, line, and body.

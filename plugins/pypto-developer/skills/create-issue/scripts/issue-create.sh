@@ -107,8 +107,7 @@ trap 'handle_signal 141 PIPE' PIPE
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  issue-create.sh preview HOST REPO TITLE BODY_FILE [LABEL...]
-  issue-create.sh create HOST REPO TITLE BODY_FILE TOKEN [LABEL...]
+  issue-create.sh create HOST REPO TITLE BODY_FILE [LABEL...]
 EOF
   exit 2
 }
@@ -129,34 +128,6 @@ has_control_character() {
     *[[:cntrl:]]*) return 0 ;;
     *) return 1 ;;
   esac
-}
-
-emit_text() {
-  local value=$1 length
-  length=$(printf '%s' "$value" | wc -c | tr -d '[:space:]')
-  printf '%s:' "$length"
-  printf '%s' "$value"
-}
-
-emit_file() {
-  local path=$1 length
-  length=$(wc -c <"$path" | tr -d '[:space:]')
-  printf '%s:' "$length"
-  cat -- "$path"
-}
-
-payload_token() {
-  local host=$1 repo=$2 title=$3 body_file=$4
-  shift 4
-  {
-    emit_text "$host"
-    emit_text "$repo"
-    emit_text "$title"
-    for label in "$@"; do
-      emit_text "$label"
-    done
-    emit_file "$body_file"
-  } | git hash-object --stdin
 }
 
 validate_payload() {
@@ -194,44 +165,15 @@ snapshot_body() {
   [ -s "$BODY_SNAPSHOT" ] || fail "snapshotted issue body is empty"
 }
 
-preview_issue() {
-  [ "$#" -ge 4 ] || usage
-  local host=$1 repo=$2 title=$3 body_file=$4 token label label_length
-  shift 4
-  validate_payload "$host" "$repo" "$title" "$body_file" "$@"
-  snapshot_body "$body_file"
-  token=$(payload_token "$host" "$repo" "$title" "$BODY_SNAPSHOT" "$@") ||
-    fail "unable to compute issue preview token"
-  printf 'Host: %s\n' "$host"
-  printf 'Repository: %s\n' "$repo"
-  printf 'Title: %s\n' "$title"
-  printf 'Labels (%s):\n' "$#"
-  for label in "$@"; do
-    label_length=$(printf '%s' "$label" | wc -c | tr -d '[:space:]')
-    printf -- '- %s:' "$label_length"
-    printf '%s\n' "$label"
-  done
-  printf 'Body:\n'
-  cat -- "$BODY_SNAPSHOT"
-  case "$(tail -c 1 "$BODY_SNAPSHOT" | wc -l | tr -d '[:space:]')" in
-    0) printf '\n' ;;
-  esac
-  printf 'ISSUE_CREATE:%s\n' "$token"
-}
-
 create_issue() {
-  [ "$#" -ge 5 ] || usage
-  local host=$1 repo=$2 title=$3 body_file=$4 approved_token=$5
-  local current_token issue_url issue_prefix issue_number capture_directory gh_status
-  shift 5
+  [ "$#" -ge 4 ] || usage
+  local host=$1 repo=$2 title=$3 body_file=$4
+  local issue_url issue_prefix issue_number capture_directory gh_status
+  shift 4
   validate_payload "$host" "$repo" "$title" "$body_file" "$@"
   TARGET_HOST=$host
   TARGET_REPO=$repo
   snapshot_body "$body_file"
-  current_token=$(payload_token "$host" "$repo" "$title" "$BODY_SNAPSHOT" "$@") ||
-    fail "unable to recompute issue preview token"
-  [ "$approved_token" = "$current_token" ] ||
-    fail "issue payload changed after preview; preview it again"
   command -v gh >/dev/null 2>&1 || fail "GitHub CLI is unavailable"
 
   capture_directory=${TMPDIR:-/tmp}
@@ -304,7 +246,6 @@ create_issue() {
 command=$1
 shift
 case "$command" in
-  preview) preview_issue "$@" ;;
   create)
     CREATE_STATE="prewrite"
     create_issue "$@"

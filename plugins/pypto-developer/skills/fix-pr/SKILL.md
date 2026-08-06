@@ -17,11 +17,11 @@ export GH_HOST="$GITHUB_HOST"
 ```
 
 Resolve the shared `lib/github/scripts/pr-context.sh` helper from the loaded
-`SKILL.md` directory, set its absolute path as `PR_LOOKUP_HELPER`, validate any
-supplied number, and run [pull-request
-lookup](../../lib/github/lookup-pr.md). Never derive a shared helper path from
-the consuming repository's `REPO_ROOT` or current working directory. Stop on
-no match, multiple matches, malformed data, a closed PR, or an API failure.
+`SKILL.md` directory—never from the consuming repository's `REPO_ROOT` or
+current working directory—set its absolute path as `PR_LOOKUP_HELPER`, validate
+any supplied number, and run [pull-request
+lookup](../../lib/github/lookup-pr.md). Stop on no match, multiple matches,
+malformed data, a closed PR, or an API failure.
 
 Read and run [permission
 detection](../../lib/github/detect-permission.md) before editing. It verifies
@@ -36,8 +36,8 @@ For `owner` or `fork`, stop unless the current branch and local repository
 match the PR head. For `maintainer`, require a clean worktree and run
 [cross-fork checkout](../../lib/github/checkout-fork-branch.md); use its
 distinct local work branch and verified contributor remote. Never infer write
-permission from the user's role, add an unverified remote, or assume
-`github.com`, `origin`, `main`, or a same-named local branch.
+permission from a role, add an unverified remote, or assume `github.com`,
+`origin`, `main`, or a same-named local branch.
 
 Read [single-use push transaction](../../lib/github/commit-and-push.md) and
 resolve its three trusted helpers from the loaded skill/reference, never the
@@ -46,20 +46,20 @@ fresh transaction immediately before repository commit/fold work.
 
 ## Fetch feedback and check state
 
-Read and run [feedback
-fetching](../../lib/github/fetch-comments.md). Fully paginate the three
-independent GraphQL connections—inline `reviewThreads`, review-body `reviews`,
-and conversation `comments`—by following `hasNextPage` and `endCursor` until
-all are false. Also paginate every nested `comments` connection inside a
-thread. Merge by node ID and retain unresolved state, comment database IDs,
-paths, authors, and bodies.
+Read and run [feedback fetching](../../lib/github/fetch-comments.md), including
+its settling rule for an inventory taken minutes after creation or a push. Fully
+paginate the three independent GraphQL connections—inline `reviewThreads`,
+review-body `reviews`, and conversation `comments`—by following `hasNextPage`
+and `endCursor` until all are false. Also paginate every nested `comments`
+connection inside a thread. Merge by node ID and retain unresolved state,
+comment database IDs, paths, authors, and bodies.
 
 Keep a per-PR handled ledger for non-resolvable review bodies and conversation
 comments. Extract actionable out-of-diff findings from review bodies; they are
 not inline threads and have no thread-resolution mutation.
 
-Fetch check names, states, and links once. Classify each details URL before
-requesting logs:
+Fetch check names, states, and links with each inventory. Classify each details
+URL before requesting logs:
 
 - For a GitHub Actions URL on `GITHUB_HOST`, inspect the run status first.
   Request whole-run logs only after the run is `completed`; a failed job beside
@@ -81,8 +81,8 @@ Present one numbered inventory before edits:
 6. discussable or informational items with a concise rationale.
 
 Classify by technical content, not by whether the author is a bot or human.
-Deduplicate summaries that merely repeat an inline item. Include the proposed
-fix or no-change response for every item.
+Deduplicate summaries that merely repeat an inline item, and include the
+proposed fix or no-change response for every item.
 
 ## Validate auto-pr composed authorization
 
@@ -155,19 +155,17 @@ with hooks disabled, prepares, accepts only runner success, and pushes with an
 explicit `--force-with-lease` when either the mutation signals rewrite or the
 fresh remote OID is not an ancestor. Failure returns without push; retry in a
 wholly new transaction, which re-derives rewrite state from its fresh capture.
-
 Re-read the PR head after the push and require its OID to equal local `HEAD`
 before responding to reviewers.
 
 ## Reply first
 
 Only after the selected fix is verified, committed, pushed, and visible at the
-PR head, read and run [reply and
-resolve](../../lib/github/reply-and-resolve.md). Reply to each addressed inline
-thread with the pushed commit and specific evidence. Batch one conversation
-reply per iteration for addressed review bodies, out-of-diff findings, and
-conversation comments; update the handled ledger only after that reply
-succeeds.
+PR head, read and run [reply and resolve](../../lib/github/reply-and-resolve.md).
+Reply to each addressed inline thread with the pushed commit and specific
+evidence. Batch one conversation reply per iteration for addressed review
+bodies, out-of-diff findings, and conversation comments; update the handled
+ledger only after that reply succeeds.
 
 ## Resolve second
 
@@ -180,21 +178,23 @@ not thread IDs.
 ## Recheck and bound the loop
 
 Perform a final recheck of all feedback pages, nested comments, review bodies,
-conversation comments, PR head OID, and check states. The PR is clean only
+conversation comments, PR head OID, and check states. Waiting is not
+rechecking: while required checks are pending, every poll re-runs that same
+complete inventory, and a checks-only poll is never a recheck. Green checks
+alone are not terminal—re-fetch every feedback surface when the last check
+completes, since a review can land inside that window. The PR is clean only
 when all required checks are completed successfully, no approved actionable
 feedback remains unhandled, every addressed inline thread is resolved, and no
 new out-of-diff or conversation request remains.
 
 Repeat fetch → classify → confirm when needed → fix → fresh transaction →
 reply → resolve → final recheck for a maximum of 5 iterations. Every iteration
-recaptures base/head identity and the newly pushed remote OID; no readonly
-state or lease crosses iterations. Record a fingerprint from head OID,
-unhandled IDs, failed checks, and normalized errors. If the same fingerprint
-repeats without progress, stop early and report the blocker; do not push
-speculative retries.
+recaptures base/head identity and the newly pushed remote OID; no readonly state
+or lease crosses iterations. Record a fingerprint from head OID, unhandled IDs,
+failed checks, and normalized errors. If the same fingerprint repeats without
+progress, stop early and report the blocker, never a speculative retry.
 
-Read [common GitHub workflow
-issues](../../lib/github/common-issues.md) for authentication, remote, rebase,
-push, quoting, GraphQL, JSON, and pagination failures. Finish with the exact PR
-URL/head, pushed commit, validation run, replies/resolutions, final check
-states, and any honest blocker.
+Read [common GitHub workflow issues](../../lib/github/common-issues.md) for
+authentication, remote, rebase, push, quoting, GraphQL, JSON, and pagination
+failures. Finish with the exact PR URL/head, pushed commit, validation run,
+replies/resolutions, final check states, and any honest blocker.

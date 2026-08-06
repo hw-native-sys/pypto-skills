@@ -25,6 +25,18 @@ write authority before it invokes `git-commit`. Retain the exact host,
 repository, number, URL, base, and head that `github-pr` reports. This identity
 is the current pull request; `git-commit` is only an indirect dependency here.
 
+Supply `github-pr` standing authorization from this explicit `auto-pr`
+invocation covering branch naming, the commit set and its message, and the
+pull-request description. Publication runs unattended: never pause to have the
+user approve a branch name, a commit count, or a description. Derive each from
+the change and report them at the end. Standing authorization covers nothing
+else; ownership separation, unavailable policy, failed verification, and every
+other stop rule the composed skills own remain in force.
+
+Require a reviewer-ready description. A body that only restates the title or
+lists commit subjects is not one; direct `github-pr` to recompose it once, and
+treat a second inadequate result as a delegated blocker.
+
 Scope every lookup, delegated repair, recheck, and report to that exact
 identity. Reject a missing, ambiguous, closed, or mismatched identity. Never
 enumerate, inspect, update, or reuse state from another pull request. Never
@@ -48,8 +60,12 @@ changed head, or reclassification.
 For each iteration:
 
 1. Delegate one read-only inventory and state recheck for the current pull
-   request to `fix-pr`. Require stable finding identifiers and available
-   evidence; pending checks are not green.
+   request to `fix-pr`, covering inline threads, review bodies, conversation
+   comments, and check states together. Require stable finding identifiers and
+   available evidence; pending checks are not green. Any wait between
+   iterations re-runs that whole inventory on each poll, never check states
+   alone, and an inventory taken minutes after publication or a push is
+   provisional until reconfirmed.
 2. **Classify before editing.** Normalize each finding and invoke the helper's
    `classify` subcommand:
    - Use `ci-objective` for a reproducible check failure and `correctness` for
@@ -89,7 +105,9 @@ Stop immediately on the first applicable condition:
 - **Deferred judgment:** no objective repair remains, but any unresolved
   architecture, product, policy, or other judgment is required. Deferred judgment takes precedence over green success, even when every required check is green.
 - **Green success:** all required checks completed successfully, no objective
-  actionable finding remains, and no deferred judgment remains open.
+  actionable finding remains, and no deferred judgment remains open. Green
+  checks alone do not establish this; require a full feedback inventory taken
+  after the last check completed.
 - **Repeated failure:** the helper reports that one stable finding was already
   attempted twice. Do not make a third attempt.
 - **Iteration exhaustion:** iteration 8 completes without reaching a prior
@@ -97,8 +115,9 @@ Stop immediately on the first applicable condition:
 - **Delegated blocker:** a composed skill reports ambiguity, unavailable
   policy, failed verification, partial publication, or identity mismatch.
 
-Report the exact current PR identity, completed iteration count, final check
-states, objective fixes and verification evidence, and all still-open items.
+Report the exact current PR identity, the head branch and commit subjects
+`github-pr` published, completed iteration count, final check states, objective
+fixes and verification evidence, and all still-open items.
 Label the outcome as green success, deferred judgment, twice-repeated failure,
 eight-iteration exhaustion, or delegated blocker. For every deferred item,
 include its stable identifier, location and author when available, concise

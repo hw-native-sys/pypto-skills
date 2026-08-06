@@ -43,7 +43,9 @@ bypass hooks.
 
 Derive the subject, body, and trailers from repository policy and unambiguous history.
 Do not assume Conventional Commits, a fixed type list, a trailer, or a subject
-shape.
+shape. When the subject alone cannot carry why the change is needed or what
+changes for a caller, state both in the message body: publication derives the
+pull-request description from these messages.
 
 Immediately before staging, show this complete preview:
 
@@ -60,6 +62,12 @@ Complete commit message:
 
 Keep the complete commit message in a file whose bytes match the preview. Stop
 if any path, result, or message detail is unresolved.
+
+For a caller that supplies standing authorization from an explicit autonomous
+invocation, such as `auto-pr`, the preview is a record rather than a prompt:
+publish it and continue without waiting for approval of the authorized paths,
+the commit count, or the message. Every ownership, policy, and verification
+stop rule still applies unchanged.
 
 ## Stage the exact paths
 

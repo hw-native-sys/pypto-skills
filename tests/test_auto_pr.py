@@ -218,6 +218,25 @@ class AutoPrCompositionTests(unittest.TestCase):
                 self.assertIn(evidence, text)
         self.assertIn("for only those findings", text)
 
+    def test_publication_is_unattended_and_reports_what_it_derived(self) -> None:
+        self.assertTrue(SKILL.is_file(), f"missing required skill: {SKILL}")
+        if not SKILL.is_file():
+            return
+
+        text = SKILL.read_text(encoding="utf-8")
+        publish = text[
+            text.find("## Publish and bind one PR") : text.find(
+                "## Orchestrate the bounded loop"
+            )
+        ]
+        self.assertIn("Publication runs unattended", publish)
+        self.assertRegex(publish, r"Require a reviewer-ready description")
+        self.assertRegex(publish, r"recompose it once")
+        self.assertRegex(
+            text,
+            r"the head branch and commit subjects\s+`github-pr` published",
+        )
+
     def test_deferred_judgment_takes_precedence_over_green_checks(self) -> None:
         self.assertTrue(SKILL.is_file(), f"missing required skill: {SKILL}")
         if not SKILL.is_file():

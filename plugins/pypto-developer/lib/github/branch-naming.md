@@ -1,14 +1,23 @@
 # Branch Naming
 
-Create a valid branch name from a user-approved change summary without imposing
-a repository-wide commit convention.
+Create a valid branch name from an approved change summary without imposing a
+repository-wide commit convention.
 
 ## Inputs
 
-- `BRANCH_SUMMARY`: short description of the change.
+- `BRANCH_SUMMARY`: short description of the change, derived from the change
+  under work rather than from an unrelated topic.
 - `BRANCH_PREFIX`: optional prefix required by repository instructions or the
   user. Do not invent one when no policy supplies it.
 - Context from [setup](setup.md).
+
+## Approve the summary
+
+A direct invocation needs explicit user approval of `BRANCH_SUMMARY`. A caller
+that supplies standing authorization from an explicit autonomous invocation,
+such as `auto-pr`, replaces that approval: derive the summary from the change,
+use it without asking, and report the created branch name in the result.
+Standing authorization covers only the name, never any other stop rule.
 
 ## Generate and validate
 

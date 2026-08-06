@@ -55,33 +55,33 @@ body that preserves all selected-template fields in order. Keep the exact body
 in a temporary file. Creating that local draft is preparation, not issue
 confirmation. Include related references without replacing required content.
 
-## Preview the complete mutation
+## Show the complete issue in text
 
-Run `scripts/issue-create.sh preview HOST REPO TITLE BODY_FILE LABEL...`, passing
-`GITHUB_HOST` and `ISSUE_REPO`. Show the helper's output verbatim. It contains
-the host, repository, title, labels, complete body, and `ISSUE_CREATE:<oid>`
-token. Labels use a counted, byte-length-delimited list, so one label containing
-a comma cannot be confused with multiple labels. Titles and labels containing
-newlines or other control characters are rejected before preview. The preview
-performs no GitHub call.
+Post the complete mutation directly in the reply as readable text: the host,
+the repository, the title, every label on its own line, and the complete body
+exactly as drafted. Show one label per line so a label containing a comma
+cannot be read as several labels. Never summarize, truncate, or paraphrase the
+body, and never present a draft that still holds a placeholder. Showing the
+issue performs no GitHub call.
 
-Never invent or reconstruct the preview token. A token is approval-eligible only
-when the executed helper printed it together with the exact complete preview.
-
-If any fact, field, target, label, or body byte changes, discard the token and
-preview again.
+The text must be exactly what the create command will send. Pass that same
+title, label list, and body file to the helper unchanged. If any fact, field,
+target, label, or body byte changes afterwards, show the complete issue again
+before creating it.
 
 ## Wait for explicit confirmation
 
-Ask whether to create exactly the previewed issue. Wait for an explicit yes
-after the complete helper preview. A request to draft, inspect, or edit is not
-confirmation. Do not combine confirmation with an earlier incomplete preview.
+Ask whether to create exactly the issue shown. Wait for an explicit yes after
+the complete text. A request to draft, inspect, or edit is not confirmation. Do
+not combine confirmation with an earlier incomplete or superseded draft.
 
 ## Create exactly the approved issue
 
-After confirmation, run `scripts/issue-create.sh create HOST REPO TITLE BODY_FILE
-TOKEN LABEL...` with the unchanged values. Interpret its outcome marker
-conservatively:
+After confirmation, run `scripts/issue-create.sh create HOST REPO TITLE
+BODY_FILE LABEL...` with the unchanged values. The helper validates the target,
+rejects a control character in the title or a label, and publishes a private
+snapshot of the body file, so a later edit of that file cannot reach GitHub
+mid-flight. Interpret its outcome marker conservatively:
 
 - `ISSUE_CREATE_OUTCOME:confirmed_not_created` means validation stopped before
   the GitHub mutation was invoked.

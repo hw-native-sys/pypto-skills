@@ -27,6 +27,7 @@ REQUIRED_GITHUB_REFERENCES = (
     ROOT / "lib/github/setup.md",
     ROOT / "lib/github/lookup-pr.md",
     ROOT / "lib/github/branch-naming.md",
+    ROOT / "lib/github/pr-description.md",
     ROOT / "lib/github/commit-and-push.md",
     ROOT / "lib/github/common-issues.md",
     ROOT / "lib/github/detect-permission.md",
@@ -67,6 +68,17 @@ REFERENCE_INPUTS = {
     ),
     "branch-naming.md": frozenset(
         {"BRANCH_PREFIX", "BRANCH_SUMMARY", "CURRENT_BRANCH", "DEFAULT_BRANCH"}
+    ),
+    "pr-description.md": frozenset(
+        {
+            "BASE_REF",
+            "GITHUB_HOST",
+            "PR_BODY",
+            "PR_NUMBER",
+            "PR_REPO",
+            "PR_ROUTE",
+            "PR_TITLE",
+        }
     ),
     "commit-and-push.md": frozenset(
         {
@@ -605,6 +617,99 @@ class PortabilityTests(unittest.TestCase):
         self.assertGreater(confirmation, findings)
         self.assertGreater(fixes, confirmation)
         self.assertIn("fix immediately", text)
+
+    def test_github_pr_composes_a_reviewer_ready_description(self) -> None:
+        skill = ROOT / "skills/github-pr/SKILL.md"
+        reference = ROOT / "lib/github/pr-description.md"
+        for path in (skill, reference):
+            with self.subTest(path=path):
+                self.assertTrue(path.is_file(), f"missing required file: {path}")
+        if not skill.is_file() or not reference.is_file():
+            return
+
+        skill_text = skill.read_text(encoding="utf-8")
+        self.assertIn("../../lib/github/pr-description.md", skill_text)
+        self.assertNotIn("PR_BODY=$(git log", skill_text)
+
+        reference_text = reference.read_text(encoding="utf-8")
+        for required in ("## Summary", "## Changes", "## Verification"):
+            with self.subTest(section=required):
+                self.assertIn(required, reference_text)
+        self.assertIn('[ "$PR_BODY" = "$PR_TITLE" ]', reference_text)
+        self.assertRegex(reference_text, r"only a list of commit subjects")
+        self.assertRegex(reference_text, r"Never invent a\s+motivation")
+        self.assertIn("no generated-by branding", reference_text)
+        self.assertIn("Preserve an existing description", reference_text)
+
+    def test_publication_skips_interactive_branch_and_commit_approval(self) -> None:
+        auto_pr = (ROOT / "skills/auto-pr/SKILL.md").read_text(encoding="utf-8")
+        self.assertRegex(
+            auto_pr,
+            r"standing authorization from this explicit `auto-pr`\s+invocation "
+            r"covering branch naming, the commit set and its message, and the\s+"
+            r"pull-request description",
+        )
+        self.assertRegex(
+            auto_pr,
+            r"never pause to have the\s+user approve a branch name, a commit "
+            r"count, or a description",
+        )
+        self.assertIn("Standing authorization covers nothing", auto_pr)
+
+        branch_naming = (ROOT / "lib/github/branch-naming.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("## Approve the summary", branch_naming)
+        self.assertRegex(branch_naming, r"direct invocation needs explicit user")
+        self.assertRegex(branch_naming, r"use it without asking")
+
+        git_commit = (ROOT / "skills/git-commit/SKILL.md").read_text(encoding="utf-8")
+        self.assertRegex(git_commit, r"the preview is a record rather than a prompt")
+        self.assertRegex(
+            git_commit,
+            r"without waiting for approval of the authorized paths,\s+"
+            r"the commit count, or the message",
+        )
+        self.assertIn("stop rule still applies unchanged", git_commit)
+
+    def test_waiting_on_checks_never_substitutes_for_a_feedback_recheck(self) -> None:
+        fix_pr = (ROOT / "skills/fix-pr/SKILL.md").read_text(encoding="utf-8")
+        recheck = fix_pr.find("## Recheck and bound the loop")
+        self.assertGreaterEqual(recheck, 0)
+        recheck_block = fix_pr[recheck:]
+        self.assertIn("Waiting is not\nrechecking", recheck_block)
+        self.assertIn("every poll re-runs that same", recheck_block)
+        self.assertIn("checks-only poll is never a recheck", recheck_block)
+        self.assertRegex(
+            recheck_block,
+            r"Green checks\s+alone are not terminal.*re-fetch every feedback surface "
+            r"when the last check\s+completes",
+        )
+
+        fetch = (ROOT / "lib/github/fetch-comments.md").read_text(encoding="utf-8")
+        self.assertIn("## An early fetch is provisional", fetch)
+        self.assertIn("Reviewers post asynchronously", fetch)
+        self.assertRegex(fetch, r'means "nothing yet", never "no\s+feedback"')
+        self.assertRegex(fetch, r"Re-fetch all three surfaces")
+        self.assertIn("settling rule", fix_pr)
+
+        auto_pr = (ROOT / "skills/auto-pr/SKILL.md").read_text(encoding="utf-8")
+        inventory = auto_pr[auto_pr.find("1. Delegate one read-only inventory") :]
+        self.assertRegex(
+            inventory,
+            r"inline threads, review bodies, conversation\s+comments, and check "
+            r"states together",
+        )
+        self.assertRegex(
+            inventory,
+            r"Any wait between\s+iterations re-runs that whole inventory on each "
+            r"poll, never check states\s+alone",
+        )
+        self.assertRegex(
+            auto_pr,
+            r"Green\s+checks alone do not establish this; require a full feedback "
+            r"inventory taken\s+after the last check completed",
+        )
 
     def test_fix_pr_auto_pr_authorization_is_narrow_and_fail_closed(self) -> None:
         skill = ROOT / "skills/fix-pr/SKILL.md"
