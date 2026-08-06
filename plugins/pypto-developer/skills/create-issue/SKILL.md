@@ -81,7 +81,9 @@ After confirmation, run `scripts/issue-create.sh create HOST REPO TITLE
 BODY_FILE LABEL...` with the unchanged values. The helper validates the target,
 rejects a control character in the title or a label, and publishes a private
 snapshot of the body file, so a later edit of that file cannot reach GitHub
-mid-flight.
+mid-flight. It also rejects a label containing a comma: the CLI reads that as
+several labels, so the name cannot be applied as discovered. Report such a
+label instead of splitting or renaming it.
 
 Before the mutation boundary it records the exact payload it is about to
 publish between `ISSUE_CREATE_PUBLISHING` and `ISSUE_CREATE_PUBLISHING_END`,

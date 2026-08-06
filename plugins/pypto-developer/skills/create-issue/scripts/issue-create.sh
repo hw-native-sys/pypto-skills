@@ -147,6 +147,12 @@ validate_payload() {
     if has_control_character "$label"; then
       fail "issue label contains a control character"
     fi
+    # `gh issue create --help` documents `--label "bug,help wanted"` as the form
+    # for two labels, so the CLI would split this name instead of applying it.
+    # The recorded payload would then claim an identity GitHub never received.
+    case "$label" in
+      *,*) fail "issue label contains a comma, which the CLI splits into separate labels: $label" ;;
+    esac
   done
 }
 

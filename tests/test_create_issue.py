@@ -577,6 +577,21 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertIn("ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr)
         self.assertEqual([], self.transcript())
 
+    def test_create_rejects_a_comma_label_the_cli_would_split(self) -> None:
+        for labels in (("bug, regression",), ("bug", "help wanted,triage")):
+            with self.subTest(labels=labels):
+                result = self.issue_create(
+                    "create", self.body_file, *labels, check=False
+                )
+
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("contains a comma", result.stderr)
+                self.assertIn(
+                    "ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr
+                )
+                self.assertNotIn("ISSUE_CREATE_PUBLISHING", result.stderr)
+        self.assertEqual([], self.transcript())
+
     def test_create_rejects_control_characters_in_title_and_labels(self) -> None:
         cases = (
             {"title": "unsafe\ntitle", "labels": ("bug",)},
