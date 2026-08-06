@@ -118,16 +118,16 @@ verified head host/repository, remote, and branch as the head authority.
 Use the repository-local `git-commit` skill for review, staging, message
 syntax, and commit shape. If unavailable, ask; do not invent a workflow.
 Define the transaction mutation with trusted edits and Git built-ins only.
-The transaction disables repository-configured hooks; never execute
-repository validation code in its credentialed shell.
+The transaction disables repository-configured hooks; run repository code only
+through the validation runner, never inside the mutation callback.
 
-Give the bundled validation sandbox the focused and broader command. It
-archives exactly `PREPARED_HEAD_OID` and exposes no Git metadata, credentials,
-host home, or network. Missing isolation/runtime, or checks requiring Git
-metadata, hardware, or network, stop the workflow. Never fall back to
-credentialed execution; only an explicitly trusted project runner enforcing
-the same boundary may replace it. Shared `prepare` derives rewrite state from
-the fresh remote OID, and `push` uses explicit `--force-with-lease` when needed.
+Give the bundled validation runner the focused and broader command. It runs
+repository-selected checks in the working checkout at exactly
+`PREPARED_HEAD_OID`, so Git metadata, submodule contents, toolchain, and
+network stay available; harness permission controls govern that execution. It
+refuses a mismatched `HEAD` or a dirty worktree, and fails when validation
+leaves artifacts behind. Shared `prepare` derives rewrite state from the fresh
+remote OID, and `push` uses explicit `--force-with-lease` when needed.
 
 One function/subshell invocation is one transaction: it captures the remote
 head before mutation and keeps readonly authority scoped inside that

@@ -83,7 +83,7 @@ REFERENCE_INPUTS = {
             "PUSH_REMOTE",
             "PUSH_TRANSACTION_HELPER",
             "ROLE",
-            "VALIDATION_SANDBOX",
+            "WORKTREE_VALIDATION",
             "WORK_BRANCH",
         }
     ),
@@ -279,6 +279,33 @@ class PortabilityTests(unittest.TestCase):
             reference,
         )
         self.assertIn('[ "$HEAD_CAN_PUSH" != "true" ]', reference)
+
+    def test_validation_runs_in_the_worktree_without_an_isolation_boundary(
+        self,
+    ) -> None:
+        reference = ROOT / "lib/github/commit-and-push.md"
+        runner = ROOT / "lib/github/scripts/worktree-validation.sh"
+        self.assertTrue(runner.is_file(), f"missing required runner: {runner}")
+        self.assertFalse((ROOT / "lib/github/scripts/validation-sandbox.sh").exists())
+
+        text = reference.read_text(encoding="utf-8")
+        self.assertIn("scripts/worktree-validation.sh", text)
+        self.assertIn("WORKTREE_VALIDATION", text)
+        self.assertIn("harness permission controls", " ".join(text.split()))
+        self.assertIn(
+            "the main checkout or a linked `git worktree add` checkout",
+            " ".join(text.split()),
+        )
+
+        for path in (
+            reference,
+            ROOT / "skills/github-pr/SKILL.md",
+            ROOT / "skills/fix-pr/SKILL.md",
+        ):
+            with self.subTest(path=path):
+                content = path.read_text(encoding="utf-8").lower()
+                for stale in ("bubblewrap", "validation-sandbox", "validation sandbox"):
+                    self.assertNotIn(stale, content)
 
     def test_rewritten_pushes_use_force_with_lease(self) -> None:
         reference = ROOT / "lib/github/commit-and-push.md"

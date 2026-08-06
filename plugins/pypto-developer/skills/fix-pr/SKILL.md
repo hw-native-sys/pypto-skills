@@ -123,9 +123,9 @@ repository-local instructions and use the repository-local testing skill and
 its defined validation commands. If no validation policy is discoverable, ask
 instead of inventing project commands.
 
-Inspect the diff while editing, but never run repository or contributor
-validation code in the credentialed worktree. It runs only at the isolated
-prepared snapshot below.
+Inspect the diff while editing, but run repository or contributor validation
+code only through the transaction's validation runner below, never inside the
+mutation callback.
 
 ## Verify the selected fixes in one transaction
 
@@ -143,12 +143,12 @@ trusted edits and Git built-ins; it disables repository-configured hooks.
 - Never rewrite a base commit, guess commit syntax, or fold across an ambiguous
   ownership boundary.
 
-Set the bundled validation sandbox's command to run repository-focused and
-broader checks. It archives exactly the prepared OID and runs without Git
-metadata, credentials, host home, or network. Missing bubblewrap/runtime or
-validation requiring Git metadata, hardware, or network stops the workflow;
-never fall back to credentialed execution. Use only an explicitly trusted
-project runner enforcing the same boundary, never one from the worktree.
+Set the bundled validation runner's command to run repository-focused and
+broader checks. It validates the working checkout at exactly the prepared OID,
+keeping Git metadata, submodule contents, toolchain, and network available
+under the harness permission controls that gate the rest of the workflow. A
+mismatched `HEAD`, a dirty worktree, or artifacts left behind by validation
+stop the workflow.
 
 Invoke the shared transaction once. It captures the contributor head, commits
 with hooks disabled, prepares, accepts only runner success, and pushes with an

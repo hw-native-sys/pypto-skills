@@ -50,16 +50,17 @@ class CIWorkflowConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(2, self.workflow.count("persist-credentials: false"))
 
-    def test_runtime_uses_supported_baseline_and_requires_bubblewrap(self) -> None:
+    def test_runtime_uses_supported_baseline_without_isolation_runtime(self) -> None:
         for required in (
             "name: Tests (Python 3.10)",
             'python-version: "3.10"',
-            "sudo apt-get install --no-install-recommends --yes bubblewrap",
-            'PYPTO_SKILLS_REQUIRE_BWRAP: "1"',
             "python -m unittest discover -s tests -v",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, self.workflow)
+        for absent in ("bubblewrap", "PYPTO_SKILLS_REQUIRE_BWRAP"):
+            with self.subTest(absent=absent):
+                self.assertNotIn(absent, self.workflow)
         self.assertNotIn("matrix:", self.workflow)
         self.assertNotIn('python-version: "3.14"', self.workflow)
 

@@ -9,12 +9,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.ci_policy import enforce_validation_sandbox
 from tests.skill_assertions import ROOT
 
 HELPER = ROOT / "lib/github/scripts/prepare-and-push.sh"
 TRANSACTION_HELPER = ROOT / "lib/github/scripts/push-transaction.sh"
-VALIDATION_SANDBOX = ROOT / "lib/github/scripts/validation-sandbox.sh"
+WORKTREE_VALIDATION = ROOT / "lib/github/scripts/worktree-validation.sh"
 
 
 class CommitAndPushBehaviorTests(unittest.TestCase):
@@ -126,16 +125,6 @@ os.execv(os.environ["TEST_REAL_GIT"], [os.environ["TEST_REAL_GIT"], *sys.argv[1:
             encoding="utf-8",
         )
         fake_git.chmod(0o755)
-
-        fake_gh = self.bin_path / "gh"
-        fake_gh.write_text(
-            """#!/usr/bin/env sh
-printf 'gh write escaped sandbox\\n' > "$TEST_GH_WRITE_MARKER"
-exit 0
-""",
-            encoding="utf-8",
-        )
-        fake_gh.chmod(0o755)
 
     def write_trusted_validation_runner(self) -> Path:
         runner = self.bin_path / "trusted-validation-runner"
@@ -290,7 +279,7 @@ esac
                 str(HELPER),
                 self.initial_feature_oid,
                 str(self.trusted_validation_runner),
-                str(VALIDATION_SANDBOX),
+                str(WORKTREE_VALIDATION),
             ],
             cwd=self.work,
             env=self.environment,
@@ -299,34 +288,29 @@ esac
             text=True,
         )
 
-    def run_validation_sandbox(
+    def run_worktree_validation(
         self,
         command: str,
         *,
-        environment: dict[str, str] | None = None,
+        prepared_head_oid: str | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.assertTrue(
-            VALIDATION_SANDBOX.is_file(),
-            f"missing production validation sandbox: {VALIDATION_SANDBOX}",
+            WORKTREE_VALIDATION.is_file(),
+            f"missing production validation runner: {WORKTREE_VALIDATION}",
         )
         return subprocess.run(
             [
-                str(VALIDATION_SANDBOX),
-                self.initial_feature_oid,
+                str(WORKTREE_VALIDATION),
+                prepared_head_oid or self.initial_feature_oid,
                 command,
             ],
-            cwd=self.work,
-            env=environment or self.environment,
+            cwd=cwd or self.work,
+            env=self.environment,
             check=False,
             capture_output=True,
             text=True,
         )
-
-    def validation_sandbox_is_operational(self) -> bool:
-        probe = self.run_validation_sandbox(
-            "test -f base.txt && test -f feature.txt && printf 'sandbox-probe\\n'"
-        )
-        return probe.returncode == 0 and "sandbox-probe" in probe.stdout
 
     def advance_remote(
         self,
@@ -722,96 +706,426 @@ esac
             self.remote_oid(self.push_url, "feature"),
         )
 
-    def test_validation_sandbox_uses_only_the_exact_committed_snapshot(
+    def test_worktree_validation_keeps_git_metadata_and_toolchain_available(
         self,
     ) -> None:
-        (self.work / "uncommitted-secret.txt").write_text(
-            "host-only\n",
+        result = self.run_worktree_validation(
+            "test -f base.txt && test -f feature.txt && "
+            "git rev-parse --show-toplevel >/dev/null && "
+            "git ls-files | grep -q '^feature.txt$' && "
+            "printf 'worktree-validation-ran\\n'"
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("worktree-validation-ran", result.stdout)
+
+    def test_worktree_validation_sees_submodule_contents(self) -> None:
+        inner = self.temp_path / "inner"
+        self.git(self.temp_path, "init", "--initial-branch=main", inner)
+        self.git(inner, "config", "user.name", "Portable Tests")
+        self.git(inner, "config", "user.email", "portable@example.com")
+        (inner / "inner.txt").write_text("inner\n", encoding="utf-8")
+        self.git(inner, "add", "inner.txt")
+        self.git(inner, "commit", "-m", "inner")
+        self.git(
+            self.work,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            inner,
+            "vendor/inner",
+        )
+        self.git(self.work, "commit", "-m", "add submodule")
+        submodule_head = self.git_output(self.work, "rev-parse", "HEAD")
+
+        result = self.run_worktree_validation(
+            "test -s vendor/inner/inner.txt && printf 'submodule-present\\n'",
+            prepared_head_oid=submodule_head,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("submodule-present", result.stdout)
+
+    def test_worktree_validation_runs_in_a_linked_worktree(self) -> None:
+        linked = self.temp_path / "linked-checkout"
+        self.git(
+            self.work,
+            "worktree",
+            "add",
+            "-b",
+            "linked-feature",
+            linked,
+            "feature",
+        )
+
+        result = self.run_worktree_validation(
+            "test -f feature.txt && git rev-parse --show-toplevel >/dev/null && "
+            "printf 'linked-checkout-ran\\n'",
+            cwd=linked,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("linked-checkout-ran", result.stdout)
+
+    def test_worktree_validation_runs_from_a_checkout_subdirectory(self) -> None:
+        nested = self.work / "nested" / "deeper"
+        nested.mkdir(parents=True)
+        (self.work / "nested" / "keep.txt").write_text("keep\n", encoding="utf-8")
+        self.git(self.work, "add", "nested/keep.txt")
+        self.git(self.work, "commit", "-m", "nested source")
+        nested_head = self.git_output(self.work, "rev-parse", "HEAD")
+
+        result = self.run_worktree_validation(
+            "test -f base.txt && printf 'ran-at-repo-root\\n'",
+            prepared_head_oid=nested_head,
+            cwd=nested,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("ran-at-repo-root", result.stdout)
+
+    def test_worktree_validation_refuses_a_commit_that_is_not_head(self) -> None:
+        (self.work / "drift.txt").write_text("drift\n", encoding="utf-8")
+        self.git(self.work, "add", "drift.txt")
+        self.git(self.work, "commit", "-m", "drift")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(
+            f"touch {shlex.quote(str(marker))}",
+            prepared_head_oid=self.initial_feature_oid,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("is not the prepared commit", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_refuses_a_dirty_worktree(self) -> None:
+        (self.work / "uncommitted.txt").write_text("dirty\n", encoding="utf-8")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(f"touch {shlex.quote(str(marker))}")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("worktree must be clean before validation", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_ignores_untracked_files_configuration(self) -> None:
+        self.git(self.work, "config", "status.showUntrackedFiles", "no")
+        (self.work / "stray.py").write_text("stray\n", encoding="utf-8")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(f"touch {shlex.quote(str(marker))}")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("worktree must be clean before validation", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_detects_artifacts_despite_untracked_config(
+        self,
+    ) -> None:
+        self.git(self.work, "config", "status.showUntrackedFiles", "no")
+
+        result = self.run_worktree_validation("touch build-artifact.o")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("validation left the worktree dirty", result.stderr)
+        self.assertIn("build-artifact.o", result.stderr)
+
+    def test_worktree_validation_ignores_submodule_ignore_configuration(self) -> None:
+        inner = self.temp_path / "ignored-inner"
+        self.git(self.temp_path, "init", "--initial-branch=main", inner)
+        self.git(inner, "config", "user.name", "Portable Tests")
+        self.git(inner, "config", "user.email", "portable@example.com")
+        (inner / "inner.txt").write_text("v1\n", encoding="utf-8")
+        self.git(inner, "add", "inner.txt")
+        self.git(inner, "commit", "-m", "v1")
+        pinned = self.git_output(inner, "rev-parse", "HEAD")
+        (inner / "inner.txt").write_text("v2\n", encoding="utf-8")
+        self.git(inner, "add", "inner.txt")
+        self.git(inner, "commit", "-m", "v2")
+        self.git(
+            self.work,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            inner,
+            "vendor",
+        )
+        self.git(self.work, "-C", "vendor", "checkout", pinned)
+        self.git(self.work, "add", "vendor")
+        self.git(self.work, "commit", "-m", "pin submodule")
+        pinned_head = self.git_output(self.work, "rev-parse", "HEAD")
+        self.git(self.work, "config", "submodule.vendor.ignore", "all")
+        self.git(self.work, "-C", "vendor", "checkout", "main")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(
+            f"touch {shlex.quote(str(marker))}",
+            prepared_head_oid=pinned_head,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("worktree must be clean before validation", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_refuses_assume_unchanged_drift(self) -> None:
+        self.git(self.work, "update-index", "--assume-unchanged", "feature.txt")
+        (self.work / "feature.txt").write_text("tampered\n", encoding="utf-8")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(f"touch {shlex.quote(str(marker))}")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("index hides tracked-file drift", result.stderr)
+        self.assertIn("feature.txt", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_refuses_skip_worktree_entries(self) -> None:
+        self.git(self.work, "update-index", "--skip-worktree", "feature.txt")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(f"touch {shlex.quote(str(marker))}")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("index hides tracked-file drift", result.stderr)
+        self.assertIn("feature.txt", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_detects_executable_bit_drift(self) -> None:
+        script = self.work / "check.sh"
+        script.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.git(self.work, "add", "check.sh")
+        self.git(self.work, "commit", "-m", "add executable check")
+        executable_head = self.git_output(self.work, "rev-parse", "HEAD")
+        self.assertTrue(
+            self.git_output(self.work, "ls-files", "--stage", "check.sh").startswith(
+                "100755"
+            )
+        )
+        self.git(self.work, "config", "core.fileMode", "false")
+        script.chmod(0o644)
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(
+            f"touch {shlex.quote(str(marker))}",
+            prepared_head_oid=executable_head,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("worktree must be clean before validation", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_detects_hidden_index_flags_in_submodules(
+        self,
+    ) -> None:
+        inner = self.temp_path / "flagged-inner"
+        self.git(self.temp_path, "init", "--initial-branch=main", inner)
+        self.git(inner, "config", "user.name", "Portable Tests")
+        self.git(inner, "config", "user.email", "portable@example.com")
+        (inner / "inner.txt").write_text("v1\n", encoding="utf-8")
+        self.git(inner, "add", "inner.txt")
+        self.git(inner, "commit", "-m", "v1")
+        self.git(
+            self.work,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            inner,
+            "vendor",
+        )
+        self.git(self.work, "commit", "-m", "add submodule")
+        submodule_head = self.git_output(self.work, "rev-parse", "HEAD")
+        self.git(
+            self.work,
+            "-C",
+            "vendor",
+            "update-index",
+            "--assume-unchanged",
+            "inner.txt",
+        )
+        (self.work / "vendor" / "inner.txt").write_text("tampered\n", encoding="utf-8")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(
+            f"touch {shlex.quote(str(marker))}",
+            prepared_head_oid=submodule_head,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("index hides tracked-file drift", result.stderr)
+        self.assertIn("vendor/inner.txt", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_rescans_hidden_flags_after_validation(self) -> None:
+        result = self.run_worktree_validation(
+            "git update-index --assume-unchanged feature.txt && "
+            "printf 'tampered\\n' > feature.txt"
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("index hides tracked-file drift after validation", result.stderr)
+        self.assertIn("feature.txt", result.stderr)
+
+    def test_worktree_validation_detects_symlink_type_drift(self) -> None:
+        (self.work / "target.txt").write_text("target\n", encoding="utf-8")
+        (self.work / "link").symlink_to("target.txt")
+        self.git(self.work, "add", "target.txt", "link")
+        self.git(self.work, "commit", "-m", "add symlink")
+        symlink_head = self.git_output(self.work, "rev-parse", "HEAD")
+        self.assertTrue(
+            self.git_output(self.work, "ls-files", "--stage", "link").startswith(
+                "120000"
+            )
+        )
+        self.git(self.work, "config", "core.symlinks", "false")
+        (self.work / "link").unlink()
+        (self.work / "link").write_text("target.txt", encoding="utf-8")
+        marker = self.temp_path / "must-not-run"
+
+        result = self.run_worktree_validation(
+            f"touch {shlex.quote(str(marker))}",
+            prepared_head_oid=symlink_head,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("worktree must be clean before validation", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_scans_submodule_paths_with_metacharacters(
+        self,
+    ) -> None:
+        inner = self.temp_path / "meta-inner"
+        self.git(self.temp_path, "init", "--initial-branch=main", inner)
+        self.git(inner, "config", "user.name", "Portable Tests")
+        self.git(inner, "config", "user.email", "portable@example.com")
+        (inner / "inner.txt").write_text("v1\n", encoding="utf-8")
+        self.git(inner, "add", "inner.txt")
+        self.git(inner, "commit", "-m", "v1")
+        submodule_path = "vendor|x"
+        self.git(
+            self.work,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            inner,
+            submodule_path,
+        )
+        self.git(self.work, "commit", "-m", "add submodule with metacharacter")
+        submodule_head = self.git_output(self.work, "rev-parse", "HEAD")
+        self.git(
+            self.work,
+            "-C",
+            submodule_path,
+            "update-index",
+            "--assume-unchanged",
+            "inner.txt",
+        )
+        (self.work / submodule_path / "inner.txt").write_text(
+            "tampered\n",
             encoding="utf-8",
         )
-        enforce_validation_sandbox(self.validation_sandbox_is_operational())
+        marker = self.temp_path / "must-not-run"
 
-        result = self.run_validation_sandbox(
-            "test -f base.txt && test -f feature.txt && "
-            "test ! -e uncommitted-secret.txt && test ! -e .git"
+        result = self.run_worktree_validation(
+            f"touch {shlex.quote(str(marker))}",
+            prepared_head_oid=submodule_head,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("index hides tracked-file drift", result.stderr)
+        self.assertIn(f"{submodule_path}/inner.txt", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_worktree_validation_names_artifacts_left_behind(self) -> None:
+        result = self.run_worktree_validation("touch build-artifact.o")
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("validation left the worktree dirty", result.stderr)
+        self.assertIn("build-artifact.o", result.stderr)
+
+    def test_worktree_validation_ignores_gitignored_build_artifacts(self) -> None:
+        (self.work / ".gitignore").write_text("build/\n", encoding="utf-8")
+        self.git(self.work, "add", ".gitignore")
+        self.git(self.work, "commit", "-m", "ignore build output")
+        ignored_head = self.git_output(self.work, "rev-parse", "HEAD")
+
+        result = self.run_worktree_validation(
+            "mkdir -p build && touch build/output.o",
+            prepared_head_oid=ignored_head,
         )
 
         self.assertEqual(0, result.returncode, result.stderr)
 
-    def test_validation_sandbox_rejects_direct_git_push(self) -> None:
-        operational = self.validation_sandbox_is_operational()
-
-        result = self.run_validation_sandbox(
-            "printf 'sandbox-started\\n'; "
-            f"git push {shlex.quote(self.push_url)} "
-            "HEAD:refs/heads/validation-attack"
-        )
+    def test_worktree_validation_reports_a_failing_repository_command(self) -> None:
+        result = self.run_worktree_validation("exit 17")
 
         self.assertNotEqual(0, result.returncode)
-        if operational:
-            self.assertIn("sandbox-started", result.stdout)
+        self.assertIn("repository-selected validation failed", result.stderr)
+
+    def test_worktree_validation_rejects_malformed_arguments(self) -> None:
+        malformed = (
+            (self.initial_feature_oid, "", "VALIDATION_COMMAND must not be empty"),
+            ("deadbeef", "true", "PREPARED_HEAD_OID is not a full Git object ID"),
+        )
+        for prepared_head_oid, command, error in malformed:
+            with self.subTest(prepared_head_oid=prepared_head_oid, command=command):
+                result = self.run_worktree_validation(
+                    command,
+                    prepared_head_oid=prepared_head_oid,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(error, result.stderr)
+
+    def test_transaction_uses_the_production_worktree_runner_end_to_end(self) -> None:
+        result = self.run_transaction_script(
+            r"""
+source "$1" || exit 90
+commit_change() {
+  printf 'validated\n' > validated.txt
+  git add validated.txt
+  git commit -m 'validated change'
+}
+VALIDATION_COMMAND='git ls-files | grep -q "^validated.txt$"' \
+  pr_push_transaction "$2" commit_change "$5" \
+  ghe.example.test base/project ghe.example.test contributor/project \
+  base main contributor feature feature
+"""
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(
-            "",
-            self.remote_oid(self.push_url, "validation-attack"),
+            self.git_output(self.work, "rev-parse", "HEAD"),
+            self.remote_oid(self.push_url, "feature"),
         )
 
-    def test_validation_sandbox_rejects_gh_write(self) -> None:
-        marker = self.temp_path / "gh-write-marker"
-        environment = self.environment.copy()
-        environment["TEST_GH_WRITE_MARKER"] = str(marker)
-        operational = self.validation_sandbox_is_operational()
-
-        result = self.run_validation_sandbox(
-            "printf 'sandbox-started\\n'; "
-            "gh api --method POST repos/base/project/issues",
-            environment=environment,
+    def test_transaction_refuses_to_push_when_worktree_validation_fails(self) -> None:
+        result = self.run_transaction_script(
+            r"""
+source "$1" || exit 90
+commit_change() {
+  printf 'unvalidated\n' > unvalidated.txt
+  git add unvalidated.txt
+  git commit -m 'unvalidated change'
+}
+if VALIDATION_COMMAND='exit 17' pr_push_transaction "$2" commit_change "$5" \
+  ghe.example.test base/project ghe.example.test contributor/project \
+  base main contributor feature feature; then
+  exit 91
+fi
+"""
         )
 
-        self.assertNotEqual(0, result.returncode)
-        if operational:
-            self.assertIn("sandbox-started", result.stdout)
-        self.assertFalse(marker.exists())
-
-    def test_validation_sandbox_hides_token_ssh_and_home_credentials(self) -> None:
-        host_home = self.temp_path / "credentialed-home"
-        ssh_directory = host_home / ".ssh"
-        ssh_directory.mkdir(parents=True)
-        (ssh_directory / "id_rsa").write_text("host-private-key\n", encoding="utf-8")
-        environment = self.environment.copy()
-        environment.update(
-            {
-                "GH_TOKEN": "host-gh-token",
-                "GITHUB_TOKEN": "host-github-token",
-                "HOME": str(host_home),
-                "SSH_AUTH_SOCK": str(self.temp_path / "host-agent.sock"),
-            }
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("trusted validation runner failed", result.stderr)
+        self.assertEqual(
+            self.initial_feature_oid,
+            self.remote_oid(self.push_url, "feature"),
         )
-        operational = self.validation_sandbox_is_operational()
-
-        result = self.run_validation_sandbox(
-            "printf 'sandbox-started\\n'; "
-            'if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ] || '
-            '[ -n "${SSH_AUTH_SOCK:-}" ]; then exit 0; fi; '
-            'cat "$HOME/.ssh/id_rsa"',
-            environment=environment,
-        )
-
-        self.assertNotEqual(0, result.returncode)
-        if operational:
-            self.assertIn("sandbox-started", result.stdout)
-
-    def test_validation_sandbox_cannot_write_outside_snapshot(self) -> None:
-        marker = self.temp_path / "outside-validation-marker"
-        operational = self.validation_sandbox_is_operational()
-
-        result = self.run_validation_sandbox(
-            f"printf 'sandbox-started\\n'; touch {shlex.quote(str(marker))}"
-        )
-
-        self.assertNotEqual(0, result.returncode)
-        if operational:
-            self.assertIn("sandbox-started", result.stdout)
-        self.assertFalse(marker.exists())
 
     def test_transaction_disables_repository_configured_commit_hooks(self) -> None:
         hook_marker = self.temp_path / "hook-marker"

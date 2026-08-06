@@ -83,5 +83,7 @@ pyright
 git ls-files -z -- '*.sh' | xargs -0 -r -n 1 bash -n
 ```
 
-CI additionally installs Bubblewrap and requires the production validation
-sandbox to execute successfully.
+The push transaction runs repository-selected validation in the working
+checkout at exactly the commit it is about to push. Executing that repository
+code is governed by the harness permission controls that already gate the rest
+of the workflow; there is no separate isolation boundary to configure.

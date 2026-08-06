@@ -8,8 +8,8 @@ consuming repository:
   executable `PREPARE_PUSH_HELPER`;
 - [`scripts/push-transaction.sh`](scripts/push-transaction.sh) as
   `PUSH_TRANSACTION_HELPER`, then source it;
-- [`scripts/validation-sandbox.sh`](scripts/validation-sandbox.sh) as the
-  absolute executable `VALIDATION_SANDBOX`.
+- [`scripts/worktree-validation.sh`](scripts/worktree-validation.sh) as the
+  absolute executable `WORKTREE_VALIDATION`.
 
 The transaction function runs in a subshell. Authority becomes readonly only
 inside that invocation and disappears on return. It stores no checkpoint.
@@ -77,7 +77,7 @@ apply_transaction_changes() {
   # disables repository-configured hooks. Never execute repository code here.
   :
 }
-VALIDATION_RUNNER="$VALIDATION_SANDBOX"
+VALIDATION_RUNNER="$WORKTREE_VALIDATION"
 VALIDATION_COMMAND='run repository-defined focused and broader checks'
 
 pr_push_transaction "$PREPARE_PUSH_HELPER" \
@@ -94,15 +94,23 @@ mechanics. The mutation runs after remote-head capture, may set
 exports a readonly `core.hooksPath=/dev/null` override; run hook policy and all
 other repository code only as validation.
 
-The bundled runner archives exactly `PREPARED_HEAD_OID`, extracts it without
-Git metadata, then uses bubblewrap with a new user/PID/network namespace, an
-empty environment and home, read-only system runtime, and only the snapshot
-writable. It passes no Git remote, token, SSH agent, host home, or network.
-Bubblewrap or a required runtime being unavailable is a validation failure.
-Never fall back to credentialed execution. If validation needs Git metadata,
-hardware, network, or another unavailable runtime, stop and require an
-explicitly trusted project runner that enforces the same credential-free,
-network-denied boundary; never select a runner from the worktree.
+The bundled runner validates in the working checkout, so repository-selected
+checks keep the Git metadata, submodule contents, toolchain, and network that
+real builds and lint scripts require. Executing repository code is governed by
+the harness permission controls that already gate every other command in the
+development loop; this reference adds no separate isolation boundary.
+
+The working checkout is whichever checkout the transaction runs in: the main
+checkout or a linked `git worktree add` checkout, entered from any
+subdirectory. The runner resolves it with `git rev-parse --show-toplevel` and
+treats both identically; no step requires one or the other.
+
+The runner still binds validation to exactly what will be pushed. It refuses to
+run unless `HEAD` equals `PREPARED_HEAD_OID`, and refuses a checkout that is
+dirty before validation. If validation leaves the checkout dirty afterward, it
+fails and names the offending paths: ignore or remove build artifacts so the
+validated tree and the pushed tree stay identical. The transaction repeats both
+checks after the runner returns.
 
 ## Identity and push guarantees
 

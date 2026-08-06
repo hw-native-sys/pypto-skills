@@ -59,12 +59,5 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install Bubblewrap
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes bubblewrap
-
-      - name: Run tests with required isolation
-        env:
-          PYPTO_SKILLS_REQUIRE_BWRAP: "1"
+      - name: Run tests
         run: python -m unittest discover -s tests -v
