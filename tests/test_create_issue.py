@@ -231,6 +231,13 @@ real_cat = os.environ["TEST_REAL_CAT"]
 argv = sys.argv[1:]
 is_response_read = any("issue-create-response.stdout." in argument for argument in argv)
 is_snapshot_copy = any(argument.endswith("issue.md") for argument in argv)
+is_snapshot_read = any(
+    "/issue-create." in argument and "issue-create-response." not in argument
+    for argument in argv
+)
+if is_snapshot_read and os.environ.get("FAIL_CAT_SNAPSHOT_READ"):
+    sys.stderr.write("cat: simulated snapshot read failure\\n")
+    raise SystemExit(1)
 if is_snapshot_copy and os.environ.get("BLOCK_CAT_SNAPSHOT_READY"):
     with open(os.environ["BLOCK_CAT_SNAPSHOT_READY"], "w", encoding="utf-8") as ready:
         ready.write("ready")
@@ -500,6 +507,47 @@ os.execv(real_cat, [real_cat, *argv])
         preview = self.issue_create("preview", self.body_file, "bug", check=False)
         self.assertEqual(2, preview.returncode)
         self.assertIn("issue-create.sh create", preview.stderr)
+        self.assertEqual([], self.transcript())
+
+    def test_create_records_the_published_payload_before_the_write(self) -> None:
+        approved_body = self.body_file.read_text(encoding="utf-8")
+
+        result = self.issue_create("create", self.body_file, "bug", "regression")
+
+        record = result.stderr
+        start = record.find("ISSUE_CREATE_PUBLISHING\n")
+        end = record.find("ISSUE_CREATE_PUBLISHING_END")
+        self.assertGreaterEqual(start, 0, record)
+        self.assertGreater(end, start, record)
+        block = record[start:end]
+        self.assertIn("Host: ghe.example.test", block)
+        self.assertIn("Repository: acme/widget", block)
+        self.assertIn(f"Title: {self.title}", block)
+        self.assertIn("Labels (2):\n- bug\n- regression", block)
+        self.assertIn(approved_body, block)
+
+    def test_recorded_payload_is_the_snapshot_not_the_mutated_source(self) -> None:
+        approved_body = self.body_file.read_text(encoding="utf-8")
+        replacement = "MUTATED AFTER CREATE SNAPSHOT\n"
+        self.environment["RACE_BODY_FILE"] = str(self.body_file)
+        self.environment["RACE_REPLACEMENT"] = replacement
+
+        result = self.issue_create("create", self.body_file, "bug")
+
+        self.assertIn(approved_body, result.stderr)
+        self.assertNotIn(replacement, result.stderr)
+        calls = self.transcript()
+        self.assertEqual(1, len(calls))
+        self.assertEqual(approved_body, calls[0]["body"])
+
+    def test_unrecordable_payload_stops_before_the_github_call(self) -> None:
+        self.environment["FAIL_CAT_SNAPSHOT_READ"] = "1"
+
+        result = self.issue_create("create", self.body_file, "bug", check=False)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("unable to record the payload being published", result.stderr)
+        self.assertIn("ISSUE_CREATE_OUTCOME:confirmed_not_created", result.stderr)
         self.assertEqual([], self.transcript())
 
     def test_create_rejects_control_characters_in_title_and_labels(self) -> None:

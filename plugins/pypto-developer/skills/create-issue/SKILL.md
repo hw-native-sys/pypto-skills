@@ -81,7 +81,16 @@ After confirmation, run `scripts/issue-create.sh create HOST REPO TITLE
 BODY_FILE LABEL...` with the unchanged values. The helper validates the target,
 rejects a control character in the title or a label, and publishes a private
 snapshot of the body file, so a later edit of that file cannot reach GitHub
-mid-flight. Interpret its outcome marker conservatively:
+mid-flight.
+
+Before the mutation boundary it records the exact payload it is about to
+publish between `ISSUE_CREATE_PUBLISHING` and `ISSUE_CREATE_PUBLISHING_END`,
+read back from that snapshot. Nothing binds this route to the earlier text, so
+compare the recorded host, repository, title, labels, and body with what you
+showed, and report any difference instead of presenting the issue as approved.
+A payload that cannot be recorded stops the workflow before GitHub is called.
+
+Interpret its outcome marker conservatively:
 
 - `ISSUE_CREATE_OUTCOME:confirmed_not_created` means validation stopped before
   the GitHub mutation was invoked.

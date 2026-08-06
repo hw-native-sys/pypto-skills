@@ -165,6 +165,36 @@ snapshot_body() {
   [ -s "$BODY_SNAPSHOT" ] || fail "snapshotted issue body is empty"
 }
 
+# Record the exact bytes that will be published, read back from the private
+# snapshot rather than the caller's mutable body file. Nothing binds the create
+# route to a payload approved earlier, so a divergence between the approved text
+# and the published one must at least be visible. Recording runs before the
+# mutation boundary and fails closed, so nothing is created unrecorded.
+record_published_payload() {
+  local host=$1 repo=$2 title=$3
+  shift 3
+  local label body record
+  # Compose first and write once: a command group reports only its last
+  # command's status, so a failed read inside one would go unnoticed.
+  body=$(cat -- "$BODY_SNAPSHOT") ||
+    fail "unable to record the payload being published"
+  record="ISSUE_CREATE_PUBLISHING
+Host: $host
+Repository: $repo
+Title: $title
+Labels ($#):"
+  for label in "$@"; do
+    record="$record
+- $label"
+  done
+  record="$record
+Body:
+$body
+ISSUE_CREATE_PUBLISHING_END"
+  printf '%s\n' "$record" >&3 ||
+    fail "unable to record the payload being published"
+}
+
 create_issue() {
   [ "$#" -ge 4 ] || usage
   local host=$1 repo=$2 title=$3 body_file=$4
@@ -174,6 +204,7 @@ create_issue() {
   TARGET_HOST=$host
   TARGET_REPO=$repo
   snapshot_body "$body_file"
+  record_published_payload "$host" "$repo" "$title" "$@"
   command -v gh >/dev/null 2>&1 || fail "GitHub CLI is unavailable"
 
   capture_directory=${TMPDIR:-/tmp}
