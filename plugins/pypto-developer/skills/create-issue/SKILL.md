@@ -85,10 +85,13 @@ mid-flight.
 
 Before the mutation boundary it records the exact payload it is about to
 publish between `ISSUE_CREATE_PUBLISHING` and `ISSUE_CREATE_PUBLISHING_END`,
-read back from that snapshot. Nothing binds this route to the earlier text, so
-compare the recorded host, repository, title, labels, and body with what you
-showed, and report any difference instead of presenting the issue as approved.
-A payload that cannot be recorded stops the workflow before GitHub is called.
+read back from that snapshot. The body is copied out verbatim under a declared
+`Body (N bytes):` length, and exactly one newline separates it from the end
+marker, so trailing newlines are recorded as sent. Nothing binds this route to
+the earlier text, so compare the recorded host, repository, title, labels, and
+body with what you showed, and report any difference instead of presenting the
+issue as approved. A payload that cannot be recorded stops the workflow before
+GitHub is called.
 
 Interpret its outcome marker conservatively:
 

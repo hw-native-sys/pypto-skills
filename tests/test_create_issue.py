@@ -509,6 +509,20 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertIn("issue-create.sh create", preview.stderr)
         self.assertEqual([], self.transcript())
 
+    def recorded_body(self, record: str) -> str:
+        marker = re.search(r"Body \((\d+) bytes\):\n", record)
+        self.assertIsNotNone(marker, record)
+        assert marker is not None
+        end = record.find("\nISSUE_CREATE_PUBLISHING_END", marker.end())
+        self.assertGreaterEqual(end, marker.end(), record)
+        body = record[marker.end() : end]
+        self.assertEqual(
+            int(marker.group(1)),
+            len(body.encode("utf-8")),
+            "declared byte count must match the recorded body",
+        )
+        return body
+
     def test_create_records_the_published_payload_before_the_write(self) -> None:
         approved_body = self.body_file.read_text(encoding="utf-8")
 
@@ -524,7 +538,20 @@ os.execv(real_cat, [real_cat, *argv])
         self.assertIn("Repository: acme/widget", block)
         self.assertIn(f"Title: {self.title}", block)
         self.assertIn("Labels (2):\n- bug\n- regression", block)
-        self.assertIn(approved_body, block)
+        self.assertEqual(approved_body, self.recorded_body(record))
+
+    def test_record_preserves_trailing_body_bytes_exactly(self) -> None:
+        for body in ("no trailing newline", "one\n", "several\n\n\n", "\n"):
+            with self.subTest(body=body):
+                self.transcript_path.unlink(missing_ok=True)
+                self.body_file.write_text(body, encoding="utf-8")
+
+                result = self.issue_create("create", self.body_file, "bug")
+
+                self.assertEqual(body, self.recorded_body(result.stderr))
+                calls = self.transcript()
+                self.assertEqual(1, len(calls))
+                self.assertEqual(body, calls[0]["body"])
 
     def test_recorded_payload_is_the_snapshot_not_the_mutated_source(self) -> None:
         approved_body = self.body_file.read_text(encoding="utf-8")

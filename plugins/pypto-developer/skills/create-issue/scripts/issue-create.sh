@@ -173,26 +173,31 @@ snapshot_body() {
 record_published_payload() {
   local host=$1 repo=$2 title=$3
   shift 3
-  local label body record
-  # Compose first and write once: a command group reports only its last
-  # command's status, so a failed read inside one would go unnoticed.
-  body=$(cat -- "$BODY_SNAPSHOT") ||
+  local label header body_bytes
+  # Never pass the body through command substitution: that strips every
+  # trailing newline, so a body differing only in trailing bytes would be
+  # recorded as one the user did approve. The bytes are copied out verbatim and
+  # framed by a declared length, and exactly one newline separates them from the
+  # end marker.
+  body_bytes=$(wc -c <"$BODY_SNAPSHOT" | tr -d '[:space:]') ||
     fail "unable to record the payload being published"
-  record="ISSUE_CREATE_PUBLISHING
+  header="ISSUE_CREATE_PUBLISHING
 Host: $host
 Repository: $repo
 Title: $title
 Labels ($#):"
   for label in "$@"; do
-    record="$record
+    header="$header
 - $label"
   done
-  record="$record
-Body:
-$body
-ISSUE_CREATE_PUBLISHING_END"
-  printf '%s\n' "$record" >&3 ||
-    fail "unable to record the payload being published"
+  header="$header
+Body ($body_bytes bytes):"
+  # Chain with && so the first failure, not the last write, decides the status.
+  {
+    printf '%s\n' "$header" &&
+      cat -- "$BODY_SNAPSHOT" &&
+      printf '\n%s\n' 'ISSUE_CREATE_PUBLISHING_END'
+  } >&3 || fail "unable to record the payload being published"
 }
 
 create_issue() {
