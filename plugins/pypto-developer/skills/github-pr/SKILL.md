@@ -7,6 +7,10 @@ description: Use when creating or updating a GitHub pull request from committed 
 
 ## Establish context and choose a route
 
+Resolve the [repository scope gate](../../lib/repository/scope.md) before the
+setup fetches below and before any push or pull-request write. In a foreign
+repository, warn with the intended push target and wait for confirmation.
+
 Read and run [GitHub workflow setup](../../lib/github/setup.md); preserve its
 context and use the discovered host for every GitHub CLI command:
 

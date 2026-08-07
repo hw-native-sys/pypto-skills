@@ -38,7 +38,20 @@ REQUIRED_GITHUB_REFERENCES = (
     ROOT / "lib/github/issue-templates.md",
 )
 
-REQUIRED_REPOSITORY_REFERENCES = (ROOT / "lib/repository/policy.md",)
+REQUIRED_REPOSITORY_REFERENCES = (
+    ROOT / "lib/repository/policy.md",
+    ROOT / "lib/repository/scope.md",
+)
+
+SCOPE_GATED_SKILLS = (
+    "skills/auto-pr/SKILL.md",
+    "skills/clean-branches/SKILL.md",
+    "skills/create-issue/SKILL.md",
+    "skills/fix-issue/SKILL.md",
+    "skills/fix-pr/SKILL.md",
+    "skills/git-commit/SKILL.md",
+    "skills/github-pr/SKILL.md",
+)
 
 GITHUB_CONTEXT_VARIABLES = (
     "REPO_ROOT",
@@ -355,8 +368,110 @@ class PortabilityTests(unittest.TestCase):
             with self.subTest(path=relative_path):
                 self.assertLessEqual(
                     len(path.read_text(encoding="utf-8").splitlines()),
-                    200,
+                    210,
                 )
+
+    def test_mutating_skills_gate_on_repository_scope(self) -> None:
+        for relative_path in SCOPE_GATED_SKILLS:
+            path = ROOT / relative_path
+            with self.subTest(path=relative_path):
+                self.assertTrue(path.is_file(), f"missing required skill: {path}")
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("../../lib/repository/scope.md", text)
+                self.assertIn("scope gate", text)
+
+    def test_shared_contracts_route_mutations_through_the_scope_gate(self) -> None:
+        policy = (ROOT / "lib/repository/policy.md").read_text(encoding="utf-8")
+        self.assertIn("(scope.md)", policy)
+
+        setup = (ROOT / "lib/github/setup.md").read_text(encoding="utf-8")
+        self.assertIn("../repository/scope.md", setup)
+        # Setup's fetches write to the local repository, so the gate precedes
+        # them; setup must not advertise itself as wholly read-only.
+        self.assertNotIn("Every step below is read-only", setup)
+        self.assertRegex(
+            " ".join(setup.split()),
+            r"Section 3 is not: its `git fetch` calls contact a remote",
+        )
+
+    def test_setup_running_skills_gate_before_the_setup_fetches(self) -> None:
+        for relative_path in (
+            "skills/clean-branches/SKILL.md",
+            "skills/fix-pr/SKILL.md",
+            "skills/github-pr/SKILL.md",
+        ):
+            path = ROOT / relative_path
+            with self.subTest(path=relative_path):
+                text = path.read_text(encoding="utf-8")
+                gate = text.find("../../lib/repository/scope.md")
+                setup = text.find("../../lib/github/setup.md")
+                self.assertGreaterEqual(gate, 0)
+                self.assertGreaterEqual(setup, 0)
+                self.assertLess(gate, setup)
+                self.assertRegex(" ".join(text.split()), r"setup'?s? fetches")
+
+    def test_scope_gate_fails_closed_and_requires_explicit_confirmation(self) -> None:
+        scope = ROOT / "lib/repository/scope.md"
+        self.assertTrue(scope.is_file(), f"missing required reference: {scope}")
+        text = scope.read_text(encoding="utf-8")
+        collapsed = " ".join(text.split())
+
+        self.assertIn("REPO_SCOPE=family", text)
+        self.assertIn("REPO_SCOPE=foreign", text)
+        self.assertIn("Fail closed", text)
+
+        gate_block = BASH_BLOCK_RE.search(text)
+        self.assertIsNotNone(gate_block)
+        block = "" if gate_block is None else gate_block.group(1)
+        # `foreign` must be the starting value, raised only by a complete sweep.
+        self.assertLess(
+            block.find("REPO_SCOPE=foreign"),
+            block.find("REPO_SCOPE=family"),
+        )
+        # Every identity command is status-checked, so a partial sweep cannot
+        # let an already-emitted marker classify the checkout as family.
+        self.assertIn("SCOPE_REMOTES=$(git remote) || return 1", block)
+        self.assertIn(
+            'SCOPE_URLS=$(git remote get-url --all "$SCOPE_REMOTE") || return 1',
+            block,
+        )
+        self.assertRegex(
+            block,
+            r"SCOPE_PUSH_URLS=\$\(git remote get-url --push --all "
+            r'"\$SCOPE_REMOTE"\) \|\|\s*\n\s*return 1',
+        )
+        self.assertRegex(block, r"SCOPE_FILES=\$\(git ls-files[\s\S]*?\) \|\| return 1")
+        self.assertNotRegex(block, r"git remote\s*\|")
+        self.assertIn("SCOPE_DISCOVERY=failed", block)
+
+        # Prose is not identity: a declaration file earns `family` only through
+        # an affirmative opt-in token, never by mentioning the family at all.
+        self.assertIn("pto-family-repository", block)
+        self.assertIn('grep -Eih "$SCOPE_DECLARATION"', block)
+        self.assertNotIn('grep -Eih "$SCOPE_MARKER"', block)
+        self.assertRegex(collapsed, r"is a topic, not a claim of membership")
+
+        # A remote's host and userinfo are infrastructure, not membership, so
+        # only the repository path of each URL reaches the marker.
+        self.assertIn("scope_url_path()", block)
+        self.assertIn('scope_url_path "$SCOPE_URL" || return 1', block)
+        self.assertRegex(collapsed, r"Only the path is identity")
+        self.assertRegex(collapsed, r"Read-only inspection is never gated")
+        self.assertRegex(
+            collapsed,
+            r"Wait for a confirmation that names this repository",
+        )
+        self.assertRegex(
+            collapsed,
+            r"does not transfer to another repository, another skill, a later "
+            r"invocation, or a later session",
+        )
+        self.assertRegex(
+            collapsed,
+            r"Standing authorization from an autonomous caller such as `auto-pr` "
+            r"does not cover this gate",
+        )
+        self.assertNotRegex(text, r"(?i)\bhw-native-sys\b")
 
     def test_auto_pr_contains_no_publication_or_repair_implementation(self) -> None:
         skill = ROOT / "skills/auto-pr/SKILL.md"

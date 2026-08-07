@@ -5,6 +5,14 @@ documentation, branch naming, ownership, or commit-message behavior. Consumer
 repository policy is authoritative; this shared library supplies no fallback
 convention.
 
+## Confirm repository scope first
+
+Resolve the [repository scope gate](scope.md) before the first repository,
+remote, or GitHub mutation. A workflow proceeds on its own authority only in a
+PTO-family repository; anywhere else it warns, names the intended mutation, and
+waits for explicit user confirmation. The discovery below is read-only and may
+run before the gate resolves.
+
 ## Discover the repository and changed scope
 
 Start with read-only commands from the current checkout:

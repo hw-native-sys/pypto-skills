@@ -4,6 +4,16 @@ Run this reference first and keep the resulting variables in the same shell.
 It discovers repository, branch, and remote context without assuming remote
 names or a default branch.
 
+Resolve the [repository scope gate](../repository/scope.md) before the first
+repository, remote, or GitHub mutation. These workflows act on their own
+authority only in a PTO-family repository; anywhere else they warn and wait for
+explicit user confirmation.
+
+Sections 1 and 2 are read-only discovery and may run before the gate resolves.
+Section 3 is not: its `git fetch` calls contact a remote and write objects,
+remote-tracking refs, and `FETCH_HEAD` into the local repository. Resolve the
+gate before that step, not merely before a push.
+
 ## 1. Authenticate and enter the worktree
 
 ```bash

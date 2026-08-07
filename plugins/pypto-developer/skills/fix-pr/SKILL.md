@@ -7,6 +7,10 @@ description: Use when an existing GitHub pull request has failing or pending che
 
 ## Establish repository and PR context
 
+Resolve the [repository scope gate](../../lib/repository/scope.md) before the
+setup fetches below and before any push, reply, or review write. In a foreign
+repository, warn with the intended write and wait for confirmation.
+
 Read repository-local instructions and discover its testing and commit
 workflows before changing code. Read and run [GitHub workflow
 setup](../../lib/github/setup.md), preserve its shell context, and pin every

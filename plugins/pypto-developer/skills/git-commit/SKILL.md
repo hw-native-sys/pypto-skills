@@ -15,6 +15,10 @@ review steps, hooks, documentation work, or a message. Use the
 [exact-path staging helper](../../lib/repository/scripts/stage-owned.sh) for the
 only staging mutation.
 
+Resolve the [repository scope gate](../../lib/repository/scope.md) before
+staging or committing. In a foreign repository, warn with the intended commit
+and wait for explicit confirmation; standing authorization does not cover it.
+
 ## Inspect and establish ownership
 
 1. Resolve the repository root and inspect the branch, status, unstaged diff,

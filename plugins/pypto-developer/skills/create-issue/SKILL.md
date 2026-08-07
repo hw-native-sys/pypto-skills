@@ -10,6 +10,11 @@ checkout. Keep discovery read-only and make the exact approved payload immutable
 
 ## Resolve repository policy
 
+Resolve the [repository scope gate](../../lib/repository/scope.md) before
+filing. Creating an issue writes to a remote repository and notifies its
+watchers, so a foreign checkout warns with the destination repository and the
+intended issue, then waits for explicit confirmation.
+
 Read the authoritative [repository policy](../../lib/repository/policy.md) first.
 Discover all applicable repository instructions for the checkout and issue
 workflow before choosing issue behavior, metadata, or follow-up mutations. Stop

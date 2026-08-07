@@ -13,7 +13,12 @@ changed or uncertain ref.
 
 ## Establish context
 
-Read and run [GitHub workflow setup](../../lib/github/setup.md) first. Use its
+Resolve the [repository scope gate](../../lib/repository/scope.md) before
+setup's fetches and before any deletion. In a foreign repository, warn with the
+exact refs at stake and wait for explicit confirmation; it is separate from the
+approval gate below.
+
+Then read and run [GitHub workflow setup](../../lib/github/setup.md). Use its
 `CURRENT_BRANCH`, `DEFAULT_BRANCH`, `BASE_REMOTE`, `BASE_REF`, `PUSH_REMOTE`,
 `PR_REPO`, and `PR_HEAD_PREFIX`; never assume conventional names.
 

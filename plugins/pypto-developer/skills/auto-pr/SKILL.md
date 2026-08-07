@@ -11,6 +11,11 @@ Git, GitHub, review, or verification mechanics owned by composed skills.
 
 ## Load the contracts
 
+Resolve the [repository scope gate](../../lib/repository/scope.md) before any
+delegation that mutates. A foreign repository is a blocker for this autonomous
+workflow: warn, report the gate, and stop rather than confirming on the user's
+behalf. Standing authorization from this invocation never covers the gate.
+
 Read [repository policy](../../lib/repository/policy.md) before classifying
 style or selecting verification. Then load the installed
 [git-commit](../git-commit/SKILL.md), [github-pr](../github-pr/SKILL.md), and

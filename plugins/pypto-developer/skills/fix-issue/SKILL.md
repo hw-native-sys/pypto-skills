@@ -10,6 +10,10 @@ project, branch, or implementation mutation before explicit approval.
 
 ## Resolve context and run preflight
 
+Resolve the [repository scope gate](../../lib/repository/scope.md) before any
+ownership, project, branch, or implementation mutation. In a foreign
+repository, warn with the intended mutation and wait for explicit confirmation.
+
 Read the authoritative [repository policy](../../lib/repository/policy.md), then
 read [issue context](../../lib/github/issue-context.md). Invoke the shared
 [issue-context helper](../../lib/github/scripts/issue-context.sh) `repository`
