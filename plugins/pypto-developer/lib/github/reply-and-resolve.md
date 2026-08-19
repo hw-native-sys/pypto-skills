@@ -63,6 +63,13 @@ fi
 Verify the result is `true`. A reply without the resolve mutation leaves the
 thread unresolved; a resolve mutation without a reply hides the rationale.
 
+Record every addressed thread ID and, after all mutations, fully paginate the
+pull request's `reviewThreads` connection again. Require every recorded ID to
+be present with `isResolved=true`; a mutation response alone is not final
+verification. A missing ID, unresolved ID, failed reply, failed mutation, or
+failed verification read is a blocker. Never report the iteration or task as
+complete while any addressed thread lacks this verified state.
+
 ## Review bodies and conversation comments
 
 These surfaces have no resolve mutation. Address their authors in one batched

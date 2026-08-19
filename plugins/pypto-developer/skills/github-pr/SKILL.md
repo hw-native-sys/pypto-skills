@@ -5,6 +5,9 @@ description: Use when creating or updating a GitHub pull request from committed 
 
 # GitHub Pull Request
 
+Never run the full system-test suite locally. Run only system-test cases directly relevant to the changed or requested scope; use CI for the full suite.
+If CI cannot run it, report the limitation instead of substituting a local full-suite run.
+
 ## Establish context and choose a route
 
 Resolve the [repository scope gate](../../lib/repository/scope.md) before the

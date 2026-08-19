@@ -8,6 +8,13 @@ description: Use when inspecting, designing, or implementing work for a GitHub i
 Inspect first, design from repository evidence, and perform no ownership,
 project, branch, or implementation mutation before explicit approval.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Resolve context and run preflight
 
 Resolve the [repository scope gate](../../lib/repository/scope.md) before any

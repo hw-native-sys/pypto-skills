@@ -11,6 +11,13 @@ Classify without deleting, approve exact branch/OID pairs, then compare each
 live ref with its approved OID immediately before deletion. Preserve every
 changed or uncertain ref.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Establish context
 
 Resolve the [repository scope gate](../../lib/repository/scope.md) before

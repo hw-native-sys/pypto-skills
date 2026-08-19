@@ -7,6 +7,13 @@ description: Use when generating, inspecting, or sharing an interactive IR lower
 
 Generate a report only after proving its worktree provenance, input identity, freshness, and standalone integrity. Keep the selected dump and delivered HTML intact.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Choose the flow
 
 - Use the **quick flow** for one exact `passes_dump/` directory.
