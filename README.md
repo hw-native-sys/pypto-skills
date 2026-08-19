@@ -28,6 +28,11 @@ User-facing workflows shared by PyPTO and pypto-lib:
 
 - `generate-ir-trace`
 - `incore-profiling`
+- `setup-and-run`
+
+`setup-and-run` owns the sequence and the gates that take a new user from a
+fresh checkout to a validated model run; the consumer repository still owns its
+own setup, platform, and model documentation.
 
 Repository-specific setup, testing, review, kernel-style, and model workflows
 remain in their owning repositories.

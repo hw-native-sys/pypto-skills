@@ -23,6 +23,7 @@ EXPECTED_SKILLS: tuple[str, ...] = (
 EXPECTED_USER_SKILLS: tuple[str, ...] = (
     "generate-ir-trace",
     "incore-profiling",
+    "setup-and-run",
 )
 
 
