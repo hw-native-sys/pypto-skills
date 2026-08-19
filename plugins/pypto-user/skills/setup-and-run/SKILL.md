@@ -69,15 +69,36 @@ Gate — every one of these must succeed in the shell that will run the case:
 ```bash
 python -c "import <framework>, torch"          # framework and torch import
 python -c "from golden import run, run_jit"    # harness imports from the repo root
-<assembler> --version                          # the pinned assembler actually runs
-git -C "$<TILE_ISA_ROOT>" rev-parse HEAD       # equals the pin in the checkout
+<assembler> --version                          # the assembler actually runs
 ```
+
+Then compare what is installed against what the selected checkout pins. This
+comparison is the gate, not the liveness checks above:
+
+```bash
+<assembler> --version                                   # installed assembler
+sed -n 's/^PTOAS_VERSION=//p' "$FRAMEWORK/toolchain/versions.env"   # pinned
+cat "$FRAMEWORK/runtime/pto_isa.pin"                    # pinned tile-ISA commit
+git -C "$TILE_ISA" rev-parse HEAD                       # installed tile-ISA
+```
+
+A binary that answers `--version` is necessary and not sufficient: an
+assembler one release away from the pin runs, reports a version, compiles some
+kernels, and fails others with tile-op contract errors that read like kernel
+bugs. Resolve a version difference here, before Stage 3 attributes it to a
+model.
+
+Locating the tile-ISA checkout the build actually uses takes a search when no
+root is exported — a build tree usually vendors its own copy, and a machine
+often has more than one. Reconcile every copy you find against the pin rather
+than the first one.
 
 For a device target, additionally: the vendor environment is sourced in this
 shell, and the device query tool lists the allocated device.
 
-Do not proceed on a partial pass. A toolchain directory that exists is not
-evidence that its binary works — run it.
+Report a mismatch with both values named and stop. If the user decides to
+proceed on a skewed toolchain anyway, say which Stage 3 failures that choice
+is expected to produce rather than silently continuing.
 
 ## Stage 2: Smoke the whole chain
 
@@ -95,6 +116,11 @@ PYTHONPATH="$PWD" python <smallest example> -p <device platform> -d <allocated i
 
 Gate: the harness prints its compile, input, golden, runtime, and validation
 stages, ends in a passing result, and the process exits 0.
+
+Exit 0 alone is not the gate. Some entry points take a compile-only path on a
+simulator and print lowering output with no run or validation stages at all;
+that is a successful compile, not a validated run, and it must be reported as
+such. Read the stages, not the exit code.
 
 Everything that fails here is an environment fault, not a model fault. Fix it
 in Stage 1 rather than moving on.
@@ -119,7 +145,17 @@ hard constraints: a `no-sim` marker means the case is device-only, and a
 `devices=N` marker means it needs N allocated cards.
 
 Prefer a rung that runs on the simulator whenever one exists at that level.
-It removes device allocation from the failure surface.
+It removes device allocation from the failure surface. Confirm what the rung
+actually did: a simulator platform can select a compile-only path, so a rung
+that lowers without running has not validated anything and does not license
+the next rung.
+
+One class of failure here is never a model fault. A compile error about a tile
+op needing an explicit temporary, or about a memory-planning pass being
+skipped, is the Stage 1 version comparison coming due: the assembler and the
+framework disagree. Kernels that avoid those ops keep passing, which makes the
+skew look like a per-kernel bug. Go back to Stage 1 and reconcile the pins —
+do not work around it by trying a different rung.
 
 ### Worked example: pypto-lib
 
@@ -129,7 +165,7 @@ shape of the ladder, not as a fixed inventory.
 | Rung | Command | Notes |
 |---|---|---|
 | Operator | `python models/qwen3_14b/topk_select.py -p a2a3sim` | Single card, simulator-capable |
-| Single layer | `python models/qwen3_14b/decode_layer_a8w8.py -p a2a3sim` | One quantized decode layer; repeat on device with `-p a2a3 -d 0` |
+| Single layer | `python models/qwen3_14b/decode_layer_a8w8.py -p a2a3sim` | One quantized decode layer. On a simulator this lowers only and reports no run stages; `-p a2a3 -d 0` is the rung that validates |
 | Single layer, BF16 | `python models/qwen3_14b/decode_fwd.py -p a2a3 -d 0` | The default CLI is the single-layer golden; device-only |
 | Multi-layer decode | `python models/qwen3_14b/decode_fwd.py -p a2a3 -d 0 --validate-fwd --fwd-layers 4` | Stacked layers plus the on-device LM head, against a host reference |
 | Multi-layer prefill | `python models/qwen3_14b/prefill_fwd.py -p a2a3 -d 0 --num-layers 2` | Device-only; start at 2 layers |
@@ -173,11 +209,13 @@ anything.
 | The harness package cannot be imported | Not running from the repository root, or the root is not on `PYTHONPATH` |
 | The framework cannot be imported | Wrong Python environment active, or it was not installed from the selected checkout |
 | Compile fails with little or no stderr | The assembler binary is not usable. It must be a regular executable that answers `--version`; a partial extract or copy satisfies an existence check and then fails real compiles |
+| Compile fails on tile-op contracts — an op "requires explicit tmp", a memory-planning pass is skipped — while other kernels still compile | The assembler and the framework are at different revisions. Compare the installed version against the checkout's pin; the per-kernel pattern is which ops each kernel happens to use, not a kernel bug |
+| A simulator run exits 0 but prints no run or validation stages | That entry point takes a compile-only path on a simulator. It proves the kernel lowers; it validates nothing. Use a device platform, or a rung that runs on the simulator, before reporting a validated result |
 | Simulator compile cannot find its compiler | Simulator builds need the exact compiler generation the setup guide names, not merely "a C++ compiler" |
 | Tile-ISA headers missing, or a version mismatch at runtime init | The compile-side and runtime-side tile-ISA checkouts have drifted. Point the environment at one checkout and confirm its `HEAD` equals the pin |
 | Import or signature errors from the runtime package on an otherwise working install | The framework and its runtime are at different revisions, or a stale prebuilt extension shadows the fresh one. Reinstall the runtime from the selected checkout. Common on shared machines where the framework is rebuilt in place |
 | A device run cannot find or initialize the onboard runtime | The vendor environment was not sourced before the runtime was installed. Source it and reinstall |
-| Device run hangs, or reports an accelerator error code | Past this runbook's scope. Move to the repository's debugging guide |
+| A run compiles, reaches the runtime stage, and then hangs or reports a runtime or driver error code | Past this runbook's scope, and it happens on simulators too, not only on devices. Move to the repository's debugging guide |
 
 ## Safety and scope
 
