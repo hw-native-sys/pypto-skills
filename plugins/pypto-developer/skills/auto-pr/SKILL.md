@@ -22,6 +22,13 @@ style or selecting verification. Then load the installed
 [fix-pr](../fix-pr/SKILL.md) skills. If any contract is unavailable, stop
 instead of recreating it.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Publish and bind one PR
 
 Delegate publication directly to `github-pr`. Do not invoke `git-commit`

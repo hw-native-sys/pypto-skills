@@ -8,6 +8,13 @@ description: Use when drafting, checking, or filing a GitHub issue, including bu
 Draft and create one issue against the repository proven by the current Git
 checkout. Keep discovery read-only and make the exact approved payload immutable.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Resolve repository policy
 
 Resolve the [repository scope gate](../../lib/repository/scope.md) before

@@ -5,6 +5,9 @@ description: Use when an existing GitHub pull request has failing or pending che
 
 # Fix Pull Request
 
+Never run the full system-test suite locally. Run only system-test cases directly relevant to the changed or requested scope; use CI for the full suite.
+If CI cannot run it, report the limitation instead of substituting a local full-suite run.
+
 ## Establish repository and PR context
 
 Resolve the [repository scope gate](../../lib/repository/scope.md) before the
@@ -178,6 +181,9 @@ is verified at the pushed head. Check that the mutation returns
 `isResolved=true`. Never resolve an unaddressed, disputed, failed-reply, or
 non-thread item. Review bodies and conversation comments remain ledger items,
 not thread IDs.
+
+For every addressed inline thread, enforce [reply and resolve](../../lib/github/reply-and-resolve.md): fully paginate `reviewThreads` again and prove its ID has `isResolved=true`.
+If any reply, resolution, or verification is blocked, report the workflow incomplete—never the iteration, task, or PR complete—and list every addressed thread ID and verified state.
 
 ## Recheck and bound the loop
 

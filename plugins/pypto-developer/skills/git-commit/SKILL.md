@@ -8,6 +8,13 @@ description: Use when creating a Git commit or preparing authorized repository c
 Create one verified commit from exactly the task-owned change. Treat existing
 worktree and index state as user-owned until inspection establishes otherwise.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Load the shared contracts
 
 Read [repository policy](../../lib/repository/policy.md) before choosing tests,

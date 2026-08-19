@@ -10,6 +10,13 @@ Resolve the target repository root first. If it contains
 before collecting a trace. Use this skill for target resolution, safe tool
 invocation, workload wiring, and artifact delivery.
 
+## Bound system-test execution
+
+Never run the full system-test suite locally. Run only system-test cases
+directly relevant to the changed or requested scope; use CI for the full
+system-test suite. If CI cannot run it, report that limitation instead of
+substituting a local full-suite run.
+
 ## Bundled scripts
 
 - `incore_profile.py`: discovers PTOAS functions, generates/builds standalone

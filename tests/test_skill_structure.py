@@ -84,6 +84,21 @@ class SkillStructureTests(unittest.TestCase):
                 for target in markdown_links(skill_markdown):
                     self.assertTrue(target.exists())
 
+    def test_all_skills_bound_local_system_test_scope(self) -> None:
+        skill_markdowns = [SKILLS / name / "SKILL.md" for name in EXPECTED_SKILLS]
+        skill_markdowns.extend(
+            USER_SKILLS / name / "SKILL.md" for name in EXPECTED_USER_SKILLS
+        )
+
+        for skill_markdown in skill_markdowns:
+            with self.subTest(skill=skill_markdown.parent.name):
+                text = skill_markdown.read_text(encoding="utf-8")
+                self.assertIn("Never run the full system-test suite locally", text)
+                self.assertIn(
+                    "directly relevant to the changed or requested scope", text
+                )
+                self.assertIn("use CI for the full", text)
+
 
 if __name__ == "__main__":
     unittest.main()

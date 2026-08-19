@@ -964,6 +964,25 @@ class PortabilityTests(unittest.TestCase):
         self.assertGreater(resolve, reply)
         self.assertIn("isResolved", text)
 
+    def test_fix_pr_requires_verified_resolution_before_completion(self) -> None:
+        skill = ROOT / "skills/fix-pr/SKILL.md"
+        reference = ROOT / "lib/github/reply-and-resolve.md"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        self.assertTrue(reference.is_file(), f"missing required reference: {reference}")
+        if not skill.is_file() or not reference.is_file():
+            return
+
+        skill_text = skill.read_text(encoding="utf-8")
+        reference_text = reference.read_text(encoding="utf-8")
+        self.assertIn("fully paginate", skill_text)
+        self.assertIn("isResolved=true", skill_text)
+        self.assertIn("report the workflow incomplete", skill_text)
+        self.assertIn("never the iteration, task, or PR complete", skill_text)
+        self.assertIn("mutation response alone is not final", reference_text)
+        self.assertIn("every recorded ID", reference_text)
+        self.assertIn("isResolved=true", reference_text)
+        self.assertIn("Never report the iteration or task as", reference_text)
+
     def test_fix_pr_rechecks_with_iteration_and_stuck_bounds(self) -> None:
         skill = ROOT / "skills/fix-pr/SKILL.md"
         self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
