@@ -132,6 +132,13 @@ layer, then the multi-layer forward. Each rung is cheaper to run and far
 easier to diagnose than the next, and a failure means much more when the rung
 below it passed.
 
+The ladder buys diagnosis, so spend it where diagnosis is worth buying. On an
+environment that has just been built, or one whose pins needed reconciling,
+climb from the bottom. On an environment that has already been proven, start
+at the rung the user actually asked for and fall back down the ladder only if
+it fails. Do not make someone run operators they did not ask about to earn a
+case that would have run.
+
 Inspect every entry point before running it, because the argument shape is
 per-script and entry-point names drift:
 
@@ -197,6 +204,13 @@ A passing run exits 0. A validation mismatch is a real numerical failure, not
 a harness error, and belongs in the repository's precision guidance rather
 than in this runbook.
 
+Find the pass signal each rung actually emits before declaring one. Rungs
+driven by the harness end in its own passing line, but a rung that checks
+itself against a host reference reports through a case-specific summary —
+match counts, an error percentage, a maximum absolute error — and never prints
+the harness line at all. Quote the line the rung printed rather than asserting
+a result its output does not contain.
+
 Do not stop at the first green run. Point the user at the repository's harness
 and validation guide, its saved-golden replay workflow so later iterations
 skip the torch reference, and its kernel coding style before they edit
@@ -215,7 +229,7 @@ anything.
 | Tile-ISA headers missing, or a version mismatch at runtime init | The compile-side and runtime-side tile-ISA checkouts have drifted. Point the environment at one checkout and confirm its `HEAD` equals the pin |
 | Import or signature errors from the runtime package on an otherwise working install | The framework and its runtime are at different revisions, or a stale prebuilt extension shadows the fresh one. Reinstall the runtime from the selected checkout. Common on shared machines where the framework is rebuilt in place |
 | A device run cannot find or initialize the onboard runtime | The vendor environment was not sourced before the runtime was installed. Source it and reinstall |
-| A run compiles, reaches the runtime stage, and then hangs or reports a runtime or driver error code | Past this runbook's scope, and it happens on simulators too, not only on devices. Move to the repository's debugging guide |
+| A run compiles, reaches the runtime stage, and then hangs or reports a runtime or driver error code | Re-check the Stage 1 pin comparison first. A skewed assembler also produces generic on-device exceptions, not only compile errors, and the same case passes once the pin is honored. Only after the pins agree is this past this runbook's scope; then move to the repository's debugging guide. It happens on simulators too, not only on devices |
 
 ## Safety and scope
 
