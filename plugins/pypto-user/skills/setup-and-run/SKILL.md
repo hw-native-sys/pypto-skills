@@ -103,8 +103,9 @@ is expected to produce rather than silently continuing.
 ## Stage 2: Smoke the whole chain
 
 Run the repository's smallest end-to-end example — one that compiles, generates
-inputs, computes a torch reference, executes, and validates. In pypto-lib that
-is `examples/beginner/hello_world.py`.
+inputs, computes a torch reference, executes, and validates. Find it in the
+repository rather than naming one from memory; the getting-started guide points
+at it, and an examples tree usually orders its own by difficulty.
 
 Run the simulator form first even when the goal is a device run: it separates
 compiler and assembler problems from device and driver problems.
@@ -164,32 +165,40 @@ framework disagree. Kernels that avoid those ops keep passing, which makes the
 skew look like a per-kernel bug. Go back to Stage 1 and reconcile the pins —
 do not work around it by trying a different rung.
 
-### Worked example: pypto-lib
+### Where the case inventory lives
 
-Verify each command with `--help` before running it; treat this table as the
-shape of the ladder, not as a fixed inventory.
+Do not carry a consumer repository's entry points, flags, or platform support
+in this skill. Those change with that tree, and a copy kept here goes stale
+without anything in that repository's review being able to notice.
 
-| Rung | Command | Notes |
-|---|---|---|
-| Operator | `python models/qwen3_14b/topk_select.py -p a2a3sim` | Single card, simulator-capable |
-| Single layer | `python models/qwen3_14b/decode_layer_a8w8.py -p a2a3sim` | One quantized decode layer. On a simulator this lowers only and reports no run stages; `-p a2a3 -d 0` is the rung that validates |
-| Single layer, BF16 | `python models/qwen3_14b/decode_fwd.py -p a2a3 -d 0` | The default CLI is the single-layer golden; device-only |
-| Multi-layer decode | `python models/qwen3_14b/decode_fwd.py -p a2a3 -d 0 --validate-fwd --fwd-layers 4` | Stacked layers plus the on-device LM head, against a host reference |
-| Multi-layer prefill | `python models/qwen3_14b/prefill_fwd.py -p a2a3 -d 0 --num-layers 2` | Device-only; start at 2 layers |
+In pypto-lib the inventory is the `run-model-cases` skill. It is authoritative
+for which entry point serves which goal, what platform and how many cards each
+one needs, and what each case prints when it passes. Invoke it and stay out of
+its tables:
 
-One decode entry point often serves both the single-layer and the multi-layer
-case, switched by a flag. In this tree `decode_fwd.py` without `--validate-fwd`
-is the single-layer case and `--fwd-layers` is ignored — read the flag help
-before concluding that a layer count had no effect.
+```bash
+ls .claude/skills/run-model-cases/SKILL.md
+```
 
-Multi-rank trees follow the same ladder with a device set instead of a device:
+In another repository, look for the equivalent — a skill whose description
+covers running or selecting model cases:
 
-| Rung | Command | Notes |
-|---|---|---|
-| Operator | `python models/deepseek_v4_flash_mtp/rmsnorm.py -p a2a3sim` | Single card, simulator-capable |
-| Attention path | `python models/deepseek_v4_flash_mtp/decode_csa.py -p a2a3sim` | Single card, simulator-capable |
-| Single layer | `python models/deepseek_v4_flash_mtp/decode_layer.py -p a2a3 --ep 2 -d 0,1` | Two allocated cards; `-d` is a comma-separated set |
-| Multi-layer forward | `python models/deepseek_v4_flash_mtp/decode_fwd.py -p a2a3 --ep 2 -d 0,1` | Device-only and substantially heavier |
+```bash
+grep -l -i -E 'run .*case|model case|entry point' .claude/skills/*/SKILL.md 2>/dev/null
+```
+
+With no such skill, derive the rungs from the repository itself rather than
+from memory: read the model documentation for what each tree implements, then
+confirm every candidate against its `--help` and its CI markers before running
+it. Report that the repository has no inventory skill, so the gap is visible
+rather than silently filled by a guess.
+
+Two properties hold across trees and are worth checking whichever way you got
+the rung. One entry point often serves several goals behind a flag, so a
+layer-count argument that appears to do nothing is usually a flag pair rather
+than a bug. And a tree whose mainline has no simulator form gives you no cheap
+rung to fall back to, which is exactly where the Stage 1 pin comparison earns
+its cost.
 
 ### Cost discipline
 
