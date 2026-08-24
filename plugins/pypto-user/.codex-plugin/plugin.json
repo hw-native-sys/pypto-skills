@@ -13,7 +13,7 @@
   "interface": {
     "displayName": "PyPTO User",
     "shortDescription": "Inspect PyPTO IR and profile generated kernels.",
-    "longDescription": "User-facing PyPTO workflows shared across repositories for taking a new user from a fresh checkout to a validated run, generating interactive IR traces, and collecting cycle-level in-core profiles.",
+    "longDescription": "User-facing PyPTO workflows shared across repositories for taking a new user from a fresh checkout to a validated run, generating interactive IR traces, collecting cycle-level in-core profiles, and reconstructing the critical path of a chip-swimlane run.",
     "developerName": "hw-native-sys",
     "category": "Developer Tools",
     "capabilities": [],

@@ -22,6 +22,7 @@ DEPLOYABLE_ROOTS = (
     DEVELOPER_PLUGIN / "skills",
     DEVELOPER_PLUGIN / "lib",
     USER_PLUGIN / "skills",
+    USER_PLUGIN / "lib",
 )
 
 REQUIRED_GITHUB_REFERENCES = (
