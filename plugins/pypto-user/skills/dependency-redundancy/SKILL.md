@@ -66,17 +66,22 @@ print("tasks:", len(graph["tasks"]), "edges:", len(edges),
 PY
 ```
 
-Two shapes make a zero result meaningless in advance:
+**Depth 1 ends the audit.** A graph with no two-hop path — a bipartite
+producer/consumer set, for example — cannot contain a redundant edge at all.
+Report that and stop.
 
-- **Depth 1.** A graph with no two-hop path — a bipartite producer/consumer set,
-  for example — cannot contain a redundant edge. Report that and stop; there is
-  nothing to audit.
-- **All-`creator` edges.** `reduced` and `omitted` protect every one of them, so
-  those modes can only ever print `0`. That is a property of the mode, not a
-  fact about the graph: a measured 1280-edge graph of this shape carried 256
-  transitively implied edges — a fifth of it — and still reported `removed 0`.
-  Go to the dataflow modes, and read a zero there as "nothing *removable*",
-  never as "nothing redundant".
+**Any `creator` share at all makes `reduced` under-report.** Protection is
+per-pair: one creator row anywhere on a `(pred, succ)` pair protects the whole
+edge, and Step-A creator retention emits such a row for exactly the pairs a
+dataflow dependency would also cover. A mixed-source graph is therefore no
+safer than an all-`creator` one — a measured graph of 5120 `creator` plus 1008
+`tensormap` edges had every one of its 2032 redundant pairs creator-annotated,
+so `reduced` reported `0` while `reduced_dataflow` removed 992.
+
+The consequence is a rule, not a judgement call: **never report from `reduced`
+alone.** Its zero is evidence about the mode, not about the graph. Use the
+source mix to explain a gap between the two modes, never to decide whether the
+second one is worth running.
 
 ## Resolve the input
 
@@ -132,9 +137,9 @@ python -m simpler_setup.tools.deps_viewer <deps.json> --edge-mode reduced_datafl
 | Result | Conclusion | Action |
 | ------ | ---------- | ------ |
 | `reduced` removes N > 0 | those `explicit` or `tensormap` edges are already implied by a longer path | drop them from the orchestration; ordering is unchanged and the scheduler carries less fan-in |
-| `reduced` removes 0, sources are all `creator` | uninformative by construction | run `reduced_dataflow` before saying anything |
+| `reduced` removes 0 and any edge carries `creator` | uninformative by construction | run `reduced_dataflow` before saying anything |
 | `reduced_dataflow` removes more than `reduced` | those creator edges are provably inside one reuse generation | they are droppable, but say plainly that the proof is byte-level and rests on the capture's tensor metadata |
-| both remove 0, depth ≥ 2, reducible sources present | the graph is genuinely minimal | nothing to do; report it as a positive result |
+| both remove 0, depth ≥ 2 | nothing is *removable* | say exactly that; redundant-but-retained edges are invisible to every mode, so it is not evidence the graph is minimal |
 | depth 1 | no two-hop path exists | do not run the audit |
 
 An edge that reduction would drop is dead scheduling bookkeeping, not dead
