@@ -73,8 +73,10 @@ python -m simpler_setup.tools.critical_path <run-dir> --top 25 --stdout
   one-line summary that always prints.
 
 Exit status 2 means the root does not exist, no rank directory was found, or a
-`merged_swimlane*.json` was unreadable. "No rank directory found" almost always
-means chip-swimlane capture was off for that run.
+`merged_swimlane*.json` was unreadable. The "no rank directory" message names
+the chip-swimlane flag, but any one of the three artifacts being absent
+produces it. After a split capture the missing one is the dependency graph, not
+the timing — check for `deps.json` before believing the message.
 
 ## Validate before interpreting
 
