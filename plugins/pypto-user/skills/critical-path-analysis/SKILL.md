@@ -95,6 +95,9 @@ the following, and report any that fail instead of quoting numbers past them.
 - **Independent timing.** Cross-check the makespan against a host-side or
   device wall-clock measurement of the same run. A makespan far from it means
   the capture covered a different window than the one under discussion.
+- **One capture, one sample.** Every percentage comes from a single run. Two
+  captures of one unchanged workload can differ by several points of stall
+  share, so never compare configurations from one capture each; repeat both.
 
 ## Interpret
 

@@ -53,8 +53,9 @@ python <case>.py --platform <target> -d <device> --enable-chip-swimlane 4 --enab
 | 4 | + orchestrator phases |
 
 Level 1 is enough for a critical-path report — it needs task start/end plus
-the graph. Choose a higher level only when the same capture must also feed a
-scheduler-overhead analysis.
+the graph, and a level-1 capture carries no AICPU task records at all yet still
+produces a complete report. Choose a higher level only when the same capture
+must also feed a scheduler-overhead analysis.
 
 **An output directory is mandatory.** With dep_gen enabled alongside any other
 diagnostic, the runtime throws unless `output_prefix` is set. Scene-test
@@ -97,13 +98,30 @@ a first-round makespan and carries warm-up cost.
 
 ## Validate the capture before analyzing it
 
-Check the run log for the reconciliation lines the collector emits:
+The collectors reconcile their device-side and host-side counters when a run
+ends, but the *positive* confirmation is emitted at info level and the usual
+default is quieter. An absent line is therefore not a passing capture. Raise the
+level on any run you intend to analyze:
 
 ```bash
-grep 'ChipSwimlane reconcile' <run-log>
+python <case>.py ... --enable-chip-swimlane 1 --enable-dep-gen --log-level info
+grep reconcile <run-log>
 ```
 
-- `counts match` — the capture is complete.
+A complete capture prints one line per collector pool plus one for the graph:
+
+```text
+ChipSwimlane reconcile: PERF counts match (collected=128, dropped=0, device_total=128)
+ChipSwimlane reconcile: SCHED_PHASE counts match (collected=157, dropped=0, device_total=157)
+ChipSwimlane reconcile: ORCH_PHASE counts match (collected=128, dropped=0, device_total=128)
+dep_gen reconcile: counts match (collected=128, dropped=0, device_total=128, overflow=0)
+```
+
+Every pool the capture level enables must appear, and every `dropped` and
+`overflow` must be zero. A pool missing from the list is not a pass.
+
+Failures are warnings, so they stay visible even at a default level:
+
 - `records dropped on device side` — records were lost; per-task timing is
   incomplete and every downstream percentage is understated. Raise the
   per-core / per-thread profiling buffer counts, or shrink the capture, and
