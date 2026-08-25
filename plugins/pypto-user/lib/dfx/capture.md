@@ -18,6 +18,11 @@ three files as siblings.
 critical-path tool also emits Perfetto traces; when absent it warns and still
 writes its Markdown report.
 
+Only the timing-based analyses need the full triple co-located. An analysis of
+the task graph's structure consumes `deps.json` on its own, so a capture made
+for one of those can leave the chip-swimlane level at whatever the run already
+used.
+
 Artifacts land under the run's `output_prefix`. Two layouts are common and
 both are supported by the tools:
 
