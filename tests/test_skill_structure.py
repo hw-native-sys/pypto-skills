@@ -14,10 +14,12 @@ EXPECTED_SKILLS: tuple[str, ...] = (
     "auto-pr",
     "clean-branches",
     "create-issue",
+    "create-task",
     "fix-issue",
     "fix-pr",
     "git-commit",
     "github-pr",
+    "read-task",
 )
 
 EXPECTED_USER_SKILLS: tuple[str, ...] = (

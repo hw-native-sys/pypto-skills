@@ -1,0 +1,4 @@
+interface:
+  display_name: "Read Task"
+  short_description: "Read a project task by its hierarchy number"
+  default_prompt: "Use $read-task to read the requested project task and its development context."

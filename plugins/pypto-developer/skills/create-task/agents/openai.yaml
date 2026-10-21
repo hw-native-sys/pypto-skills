@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create or Update Task"
+  short_description: "Create and update project taskboard tasks"
+  default_prompt: "Use $create-task to create or update this task in the requested project."
