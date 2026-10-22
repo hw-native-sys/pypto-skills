@@ -67,6 +67,15 @@ body that preserves all selected-template fields in order. Keep the exact body
 in a temporary file. Creating that local draft is preparation, not issue
 confirmation. Include related references without replacing required content.
 
+### Label PyPTO reports filed in PTOAS
+
+When the validated target is `github.com/hw-native-sys/PTOAS` and the issue
+reports a problem or request originating from PyPTO usage, include the `pypto`
+label in addition to all template-required labels. Apply this rule even when
+the PTOAS template does not list `pypto`; include it in the complete preview
+and creation payload. Do not apply it to unrelated PTOAS reports or other
+repositories merely because this skill is in use.
+
 ## Show the complete issue in text
 
 Post the complete mutation directly in the reply as readable text: the host,
@@ -152,6 +161,12 @@ eventual consistency or incomplete evidence prevents proving absence, stop and
 recheck later or ask the user; do not retry. Only a validated absence plus fresh
 explicit approval permits another create attempt. On ordinary success, report
 the helper-validated URL.
+
+For a PyPTO report filed in PTOAS, read back the created issue's labels and
+verify that `pypto` is present. If it is missing, add it to that same issue
+without replacing existing labels, then verify again. If permissions prevent
+applying it, report the created issue URL and the missing label explicitly;
+do not recreate the issue or claim labeling succeeded.
 
 Treat project metadata as a separate optional mutation. Perform it only when
 applicable repository instructions explicitly name the project and every field
