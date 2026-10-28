@@ -1,0 +1,4 @@
+interface:
+  display_name: "Track Pending PR"
+  short_description: "Add a PR to the pending merge tracking list"
+  default_prompt: "Use $track-pr to add this PR to the pending merge list in the specified project."

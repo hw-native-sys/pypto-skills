@@ -20,12 +20,13 @@ Reusable repository development workflows:
 - `auto-pr`
 - `create-task` — create and update project taskboard tasks with personal API tokens
 - `read-task` — read a project task by hierarchy number without credentials
+- `track-pr` — add a PR to a project’s pending merge list with a personal API token
 
 Repository workflows discover and honor the consumer repository's policies,
 test commands, issue forms, and commit conventions. Taskboard workflows use
 `https://taskboard.pypto.cloud` for the `pypto`, `pypto-lib`, `serving`, and
 `simpler` project spaces; `--project` selects the space and defaults to `pypto`.
-The write skill requires the user's own revocable API token. No credentials,
+The write skills require the user's own revocable API token. No credentials,
 local task database, or SSH setup ship in the plugin.
 
 ### `pypto-user`

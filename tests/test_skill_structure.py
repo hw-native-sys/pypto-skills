@@ -20,6 +20,7 @@ EXPECTED_SKILLS: tuple[str, ...] = (
     "git-commit",
     "github-pr",
     "read-task",
+    "track-pr",
 )
 
 EXPECTED_USER_SKILLS: tuple[str, ...] = (
