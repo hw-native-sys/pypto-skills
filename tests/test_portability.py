@@ -999,14 +999,22 @@ class PortabilityTests(unittest.TestCase):
     def test_clean_branches_uses_portable_safe_deletion_contract(self) -> None:
         skill = ROOT / "skills/clean-branches/SKILL.md"
         helper = ROOT / "skills/clean-branches/scripts/clean-branches.sh"
+        lookup = ROOT / "skills/clean-branches/scripts/merged-pr-heads.sh"
         self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
         self.assertTrue(helper.is_file(), f"missing required helper: {helper}")
+        self.assertTrue(lookup.is_file(), f"missing required helper: {lookup}")
+        self.assertTrue(
+            os.access(lookup, os.X_OK),
+            f"helper is not executable: {lookup}",
+        )
         if not skill.is_file():
             return
 
         text = skill.read_text(encoding="utf-8")
         self.assertIn("../../lib/github/setup.md", text)
         self.assertIn("scripts/clean-branches.sh", text)
+        self.assertIn("scripts/merged-pr-heads.sh", text)
+        self.assertIn('"$MERGED_PR_HEADS_HELPER"', text)
         self.assertIn("DEFAULT_BRANCH", text)
         self.assertIn("headRefOid", text)
         self.assertIn("Approved OID", text)
@@ -1026,6 +1034,43 @@ class PortabilityTests(unittest.TestCase):
                 command_position = text.find(command)
                 self.assertGreaterEqual(command_position, 0)
                 self.assertLess(approval.start(), command_position)
+
+    def test_clean_branches_merged_lookup_uses_host_pinned_rest_api(self) -> None:
+        skill = ROOT / "skills/clean-branches/SKILL.md"
+        helper = ROOT / "skills/clean-branches/scripts/merged-pr-heads.sh"
+        self.assertTrue(skill.is_file(), f"missing required skill: {skill}")
+        self.assertTrue(helper.is_file(), f"missing required helper: {helper}")
+        if not skill.is_file() or not helper.is_file():
+            return
+
+        skill_text = skill.read_text(encoding="utf-8")
+        helper_text = helper.read_text(encoding="utf-8")
+        self.assertIn("scripts/merged-pr-heads.sh", skill_text)
+        self.assertIn('"$MERGED_PR_HEADS_HELPER"', skill_text)
+        self.assertIn("lookup failure", skill_text)
+        self.assertNotIn("gh pr list", skill_text)
+        self.assertNotRegex(bash_source(skill), r"gh pr list[\s\S]{0,200}--head")
+
+        for literal in (
+            'gh api --hostname "$GITHUB_HOST" --method GET',
+            '"repos/$PR_REPO/pulls"',
+            "-f state=closed",
+            '-f "head=$HEAD_SELECTOR"',
+            "-f per_page=100",
+            "--paginate --slurp",
+            "else add",
+            "| jq -ce '",
+            'error("malformed paginated response")',
+            "merged_at",
+            ".head.sha",
+            "head.repo",
+            "ascii_downcase",
+        ):
+            with self.subTest(literal=literal):
+                self.assertIn(literal, helper_text)
+
+        self.assertNotIn("--slurp --jq", helper_text)
+        self.assertTrue(helper_text.startswith("#!/usr/bin/env bash"))
 
 
 if __name__ == "__main__":

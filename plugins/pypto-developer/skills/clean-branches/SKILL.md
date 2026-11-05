@@ -29,9 +29,12 @@ Then read and run [GitHub workflow setup](../../lib/github/setup.md). Use its
 `CURRENT_BRANCH`, `DEFAULT_BRANCH`, `BASE_REMOTE`, `BASE_REF`, `PUSH_REMOTE`,
 `PR_REPO`, and `PR_HEAD_PREFIX`; never assume conventional names.
 
-Resolve [the cleanup helper](scripts/clean-branches.sh) relative to this file
-and store its absolute path in `CLEAN_BRANCHES_HELPER`. The helper supplies
-deterministic classification, live-OID checks, and leased remote deletion.
+Resolve [the merged-pull-request lookup helper](scripts/merged-pr-heads.sh) and
+[the cleanup helper](scripts/clean-branches.sh) relative to this file, and store
+their absolute paths in `MERGED_PR_HEADS_HELPER` and `CLEAN_BRANCHES_HELPER`.
+The lookup helper supplies host-pinned REST pagination and merged-head
+verification; the cleanup helper supplies deterministic classification,
+live-OID checks, and leased remote deletion.
 
 Fetches and dry-run pruning are allowed during classification. Run no deletion
 command in this phase.
@@ -47,31 +50,46 @@ different tips.
    `BASE_REMOTE`, classify no remote ref as deletable.
 3. Use `git remote prune "$PUSH_REMOTE" --dry-run` only to report stale
    tracking refs.
-4. For tips that are not ancestors of `BASE_REF`, query merged pull requests:
+4. For tips that are not ancestors of `BASE_REF`, ask the lookup helper for the
+   head OIDs of merged pull requests:
 
 ```bash
-gh pr list --repo "$PR_REPO" \
-  --head "${PR_HEAD_PREFIX}${BRANCH_NAME}" \
-  --state merged --json number,title,headRefOid --limit 100
+if MERGED_PR_HEAD_OIDS=$(
+  "$MERGED_PR_HEADS_HELPER" \
+    "$GITHUB_HOST" "$PR_REPO" "$PR_HEAD_PREFIX" "$BRANCH_NAME"
+); then
+  "$CLEAN_BRANCHES_HELPER" classify \
+    "$BRANCH_NAME" "$BRANCH_REF" "$BASE_REF" "$DEFAULT_BRANCH" \
+    $MERGED_PR_HEAD_OIDS
+else
+  # Lookup failure: record this branch as protected and continue.
+fi
 ```
 
-Pass every returned `headRefOid` to the helper:
+The lookup helper queries closed pull requests through host-pinned REST
+(`gh api --hostname "$GITHUB_HOST" --method GET "repos/$PR_REPO/pulls"` with
+`state=closed`, `head=<head-owner>:$BRANCH_NAME`, `per_page=100`, and
+`--paginate --slurp`), where the head owner comes from `PR_HEAD_PREFIX` or from
+`PR_REPO` when the prefix is empty. GitHub ignores an unqualified `head`
+filter, so the selector is always owner-qualified. The helper verifies
+`head.ref` and the head owner and prints one merged `head.sha` per line. The
+REST `head.sha` is the pull request's `headRefOid`.
 
-```bash
-"$CLEAN_BRANCHES_HELPER" classify \
-  "$BRANCH_NAME" "$BRANCH_REF" "$BASE_REF" "$DEFAULT_BRANCH" \
-  <merged-PR-head-OIDs...>
-```
+Empty output with status 0 means no merged pull request exists for this branch.
+A nonzero status is a lookup failure: protect the branch, report it, and
+continue with the remaining branches. Never treat a failed lookup as "no merged
+pull request".
 
 Pass the exact enumerated full ref as `BRANCH_REF`: either
 `refs/heads/$BRANCH_NAME` or
 `refs/remotes/$PUSH_REMOTE/$BRANCH_NAME`. The helper validates and reads that
 specific ref without substituting a same-named local branch.
 
-Only `normal-merge` and `squash-merge` are candidates. An exact
-`headRefOid` match is required for a squash merge. Protect
-`reused-or-unfinished`, lookup failures, current/default refs, and uncertain
-results.
+Only `normal-merge` and `squash-merge` are candidates. An exact merged PR
+`headRefOid` (the REST `head.sha`) match is required for a squash merge.
+Protect `reused-or-unfinished`, lookup failures, current/default refs, and
+uncertain results. A lookup failure is not evidence that the branch is
+unmerged.
 
 Never delete from `$BASE_REMOTE`; its branches are context, not candidates.
 
@@ -134,7 +152,7 @@ all approved deletions finish.
 | Condition | Result |
 | --- | --- |
 | Tip is an ancestor of `BASE_REF` | Normal-merge candidate |
-| Tip equals merged PR `headRefOid` | Squash-merge candidate |
+| Tip equals merged PR `headRefOid` (`head.sha`) | Squash-merge candidate |
 | Tip differs from approved or PR OID | Preserve and reclassify |
 | Current, default, base-remote, or uncertain | Protect |
 | Exact rows not explicitly approved | Do not delete |
@@ -145,4 +163,5 @@ all approved deletions finish.
 - Checking an OID before approval but not again immediately before deletion.
 - Using an unleased remote delete.
 - Combining local and remote instances despite different tips.
+- Treating a failed merged-PR lookup as "no merged PR".
 - Treating urgency as approval or touching `BASE_REMOTE`.
