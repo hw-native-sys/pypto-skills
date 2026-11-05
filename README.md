@@ -31,11 +31,13 @@ local task database, or SSH setup ship in the plugin.
 
 ### `pypto-user`
 
-User-facing workflows shared by PyPTO and pypto-lib:
+User-facing workflows shared by PyPTO, pypto-lib, and simpler:
 
+- `setup-and-run`
 - `generate-ir-trace`
 - `incore-profiling`
-- `setup-and-run`
+- `critical-path-analysis`
+- `dependency-redundancy`
 
 `setup-and-run` owns the sequence and the gates that take a new user from a
 fresh checkout to a validated model run; the consumer repository still owns its
