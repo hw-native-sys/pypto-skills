@@ -62,6 +62,32 @@ def task_api() -> Iterator[tuple[str, dict[str, Any]]]:
             state["requests"].append(
                 ("GET", self.path, self.headers.get("Authorization"), None)
             )
+            if (
+                state.get("private_reads")
+                and self.headers.get("Authorization") != "Bearer " + TOKEN
+            ):
+                self.reply(401, {"error": "private API"})
+                return
+            if state.get("read_status"):
+                self.reply(state["read_status"], {"error": TOKEN})
+                return
+            if state.get("read_redirect_to"):
+                self.send_response(303)
+                self.send_header("Location", state["read_redirect_to"])
+                self.end_headers()
+                return
+            if state.get("html_login"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<html>Sign in</html>")
+                return
+            if urlparse(self.path).path == "/api/projects":
+                self.reply(
+                    200,
+                    {"auth": {"user": {"username": "test-reader", "role": "viewer"}}},
+                )
+                return
             payload: dict[str, Any] = {
                 "tasks": [
                     task for task in state["tasks"] if task["project_id"] == project
@@ -192,10 +218,95 @@ class TaskboardTests(unittest.TestCase):
                         self.assertEqual(task[field], updated[field])
             for method, _, authorization, payload in state["requests"]:
                 if method == "GET":
-                    self.assertIsNone(authorization)
+                    # Existing writer reads are separate from the reader skill.
+                    self.assertIn(authorization, (None, "Bearer " + TOKEN))
                 else:
                     self.assertEqual("Bearer " + TOKEN, authorization)
                     self.assertNotIn(TOKEN, json.dumps(payload))
+
+    def test_private_task_reads_and_auth_check_use_personal_token(self) -> None:
+        with task_api() as (base, state):
+            state["private_reads"] = True
+            for project in PROJECTS:
+                self.assertEqual([], self.reader.get_tasks(base, project))
+            auth = self.reader.check_auth(base)
+            self.assertEqual(
+                {
+                    "authenticated": True,
+                    "api_url": base,
+                    "username": "test-reader",
+                    "role": "viewer",
+                },
+                auth,
+            )
+            self.assertNotIn(TOKEN, json.dumps(auth))
+            self.assertTrue(all(r[2] == "Bearer " + TOKEN for r in state["requests"]))
+            self.assertTrue(all(r[0] == "GET" for r in state["requests"]))
+            run = subprocess.run(
+                [sys.executable, str(READ), "--check-auth", "--api-url", base],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, run.returncode, run.stderr)
+            self.assertTrue(json.loads(run.stdout)["authenticated"])
+            self.assertNotIn(TOKEN, run.stdout + run.stderr)
+
+    def test_reader_missing_or_unsafe_token_stops_before_request(self) -> None:
+        with (
+            task_api() as (base, state),
+            patch.dict(os.environ, {"PYPTO_TASK_API_TOKEN": ""}),
+        ):
+            with self.assertRaises(self.reader.ReadError):
+                self.reader.get_tasks(base)
+            self.assertEqual([], state["requests"])
+            self.token_file.write_text(TOKEN)
+            self.token_file.chmod(0o600)
+            self.assertEqual([], self.reader.get_tasks(base))
+            self.assertEqual("Bearer " + TOKEN, state["requests"][0][2])
+            if os.name != "nt":
+                state["requests"].clear()
+                self.token_file.chmod(0o644)
+                with self.assertRaises(self.reader.ReadError):
+                    self.reader.get_tasks(base)
+                self.assertEqual([], state["requests"])
+
+    def test_reader_auth_errors_do_not_retry_or_expose_secrets(self) -> None:
+        for status in [401, 403]:
+            with self.subTest(status=status), task_api() as (base, state):
+                state["read_status"] = status
+                with self.assertRaises(self.reader.ReadError) as error:
+                    self.reader.get_tasks(base)
+                self.assertIn(str(status), str(error.exception))
+                self.assertNotIn(TOKEN, str(error.exception))
+                self.assertEqual(1, len(state["requests"]))
+                self.assertEqual("Bearer " + TOKEN, state["requests"][0][2])
+        with task_api() as (base, state):
+            state["html_login"] = True
+            with self.assertRaises(self.reader.ReadError):
+                self.reader.get_tasks(base)
+            self.assertEqual(1, len(state["requests"]))
+        with task_api() as (destination, received), task_api() as (base, sent):
+            sent["read_redirect_to"] = destination + "/api/tasks"
+            with self.assertRaises(self.reader.ReadError) as error:
+                self.reader.get_tasks(base)
+            self.assertIn("303", str(error.exception))
+            self.assertEqual([], received["requests"])
+            self.assertEqual(1, len(sent["requests"]))
+
+    def test_reader_rejects_untrusted_origin_before_loading_token(self) -> None:
+        for base in [
+            "http://taskboard.pypto.cloud",
+            "https://taskboard.pypto.cloud.evil.test",
+            "https://user:password@taskboard.pypto.cloud",
+            "https://taskboard.pypto.cloud:444",
+            "https://taskboard.pypto.cloud/api/tasks",
+        ]:
+            with (
+                self.subTest(base=base),
+                patch.dict(os.environ, {"PYPTO_TASK_API_TOKEN": ""}),
+            ):
+                with self.assertRaises((self.reader.ReadError, ValueError)):
+                    self.reader.get_tasks(base)
 
     def test_tokens_resolve_without_printing_and_check_file_mode(self) -> None:
         self.token_file.write_text("file-token\n")
@@ -336,8 +447,8 @@ class TaskboardTests(unittest.TestCase):
                 [*tasks, {**tasks[1], "id": "duplicate"}], "1.1", "https://example.test"
             )
 
-    def test_cli_read_is_public_and_write_uses_stdin(self) -> None:
-        with task_api() as (base, _):
+    def test_cli_read_is_authenticated_and_write_uses_stdin(self) -> None:
+        with task_api() as (base, state):
             environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
             create = subprocess.run(
                 [
@@ -356,7 +467,7 @@ class TaskboardTests(unittest.TestCase):
                 env=environment,
             )
             self.assertEqual(0, create.returncode, create.stderr)
-            environment["PYPTO_TASK_API_TOKEN"] = ""
+            state["private_reads"] = True
             read = subprocess.run(
                 [
                     sys.executable,
@@ -379,6 +490,17 @@ class TaskboardTests(unittest.TestCase):
             self.assertIn("project=serving", result["task_url"])
             for output in [create.stdout, create.stderr, read.stdout, read.stderr]:
                 self.assertNotIn(TOKEN, output)
+            count = len(state["requests"])
+            environment["PYPTO_TASK_API_TOKEN"] = ""
+            missing = subprocess.run(
+                [sys.executable, str(READ), "1", "--api-url", base],
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(1, missing.returncode)
+            self.assertEqual(count, len(state["requests"]))
+            self.assertNotIn(TOKEN, missing.stdout + missing.stderr)
 
 
 if __name__ == "__main__":
