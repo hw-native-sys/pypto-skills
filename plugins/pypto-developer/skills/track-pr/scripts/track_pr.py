@@ -98,9 +98,10 @@ def token():
 
 def api(base, method="GET", payload=None, project="pypto"):
     base = origin(base)
-    headers = {"Content-Type": "application/json"}
-    if method == "POST":
-        headers["Authorization"] = "Bearer " + token()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token(),
+    }
     request = Request(
         base + "/api/pending-prs?project=" + project,
         data=json.dumps(payload).encode() if payload is not None else None,

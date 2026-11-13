@@ -21,7 +21,7 @@ Run [scripts/track_pr.py](scripts/track_pr.py) relative to this skill:
 python3 /path/to/track-pr/scripts/track_pr.py https://github.com/OWNER/REPO/pull/123 --project pypto
 ```
 
-The helper first reads the selected project’s public list. If the PR already
+The helper first reads the selected project’s authenticated list. If the PR already
 exists there, it reports that record without writing. The same PR can be
 tracked independently in other projects; never reuse another project’s entry. Otherwise it sends one
 POST; the server deduplicates canonical PR URLs within each project. The helper
@@ -29,9 +29,11 @@ reads the list again to confirm the returned stable ID and URL. If a write
 response is uncertain, it only re-reads to check the result and stops if it cannot confirm it. Never
 blindly retry an uncertain write or substitute another user's credentials.
 
-Writes use the taskboard user's personal API token, in this order:
+Reads and writes use the taskboard user's personal API token, in this order:
 `PYPTO_TASK_API_TOKEN`, `PYPTO_TASK_API_TOKEN_FILE`, or
 `~/.config/pypto-taskboard/token`. Token files must be mode `600` on Unix.
+The initial lookup, existing-entry checks, and post-write confirmation all
+require this token, even when no write is needed.
 Do not print credentials, copy them into commands, or place them in PR/task
 content. No GitHub credentials or authenticated GitHub operations are needed.
 Only the canonical taskboard HTTPS origin or an explicitly selected HTTP
