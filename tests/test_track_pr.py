@@ -47,6 +47,17 @@ def queue_api() -> Iterator[tuple[str, dict[str, Any]]]:
             state["requests"].append(
                 ("GET", self.path, self.headers.get("Authorization"), None)
             )
+            if self.headers.get("Authorization") != "Bearer " + TOKEN:
+                self.reply(401, {"error": "login required"})
+                return
+            if state.get("read_status"):
+                self.reply(state["read_status"], {"error": "read denied"})
+                return
+            if state.get("read_redirect_to"):
+                self.send_response(307)
+                self.send_header("Location", state["read_redirect_to"])
+                self.end_headers()
+                return
             entries = [
                 entry for entry in state["entries"] if entry["project_id"] == project
             ]
@@ -116,36 +127,40 @@ class TrackPRTests(unittest.TestCase):
                     self.assertEqual(
                         added["tracking_url"], base + "/pending-prs?project=" + project
                     )
-                    with patch.object(
-                        self.helper, "token", side_effect=AssertionError("no write")
-                    ):
-                        existing = self.helper.track(
-                            PR_URL, project=project, api_url=base
-                        )
+                    existing = self.helper.track(PR_URL, project=project, api_url=base)
                     self.assertTrue(existing["already_tracked"])
                     self.assertEqual(existing["entry"]["id"], added["entry"]["id"])
             self.assertEqual(len(set(ids)), len(PROJECTS))
             writes = [row for row in state["requests"] if row[0] == "POST"]
             self.assertEqual(len(writes), len(PROJECTS))
-            self.assertTrue(all(row[2] == "Bearer " + TOKEN for row in writes))
             self.assertTrue(
-                all(row[2] is None for row in state["requests"] if row[0] == "GET")
+                all(row[2] == "Bearer " + TOKEN for row in state["requests"])
             )
 
-    def test_existing_entry_normalizes_url_and_does_not_load_token(self) -> None:
+    def test_existing_entry_normalizes_url_and_authenticates_without_writing(
+        self,
+    ) -> None:
         with queue_api() as (base, state):
             entry = {"id": "stable", "url": PR_URL, "project_id": "serving"}
             state["entries"].append(entry)
-            with patch.object(
-                self.helper, "token", side_effect=AssertionError("no token")
-            ):
-                result = self.helper.track(
-                    PR_URL.replace("example/compiler", "EXAMPLE/COMPILER") + "/",
-                    project="serving",
-                    api_url=base,
-                )
+            result = self.helper.track(
+                PR_URL.replace("example/compiler", "EXAMPLE/COMPILER") + "/",
+                project="serving",
+                api_url=base,
+            )
             self.assertEqual(result["entry"], entry)
             self.assertEqual(len(state["requests"]), 1)
+            self.assertEqual(state["requests"][0][0], "GET")
+            self.assertEqual(state["requests"][0][2], "Bearer " + TOKEN)
+
+    def test_unauthorized_and_forbidden_reads_stop_before_post(self) -> None:
+        for status in (401, 403):
+            with self.subTest(status=status), queue_api() as (base, state):
+                state["read_status"] = status
+                with self.assertRaises(self.helper.APIError) as caught:
+                    self.helper.track(PR_URL, api_url=base)
+                self.assertEqual(caught.exception.status, status)
+                self.assertEqual([row[0] for row in state["requests"]], ["GET"])
 
     def test_project_confirmation_failure_stops_before_post(self) -> None:
         with queue_api() as (base, state):
@@ -199,19 +214,20 @@ class TrackPRTests(unittest.TestCase):
                 self.assertEqual([row[0] for row in state["requests"]], expected)
 
     def test_authenticated_redirect_is_never_followed(self) -> None:
-        with queue_api() as (base, state):
-            state["redirect_to"] = base + "/unexpected-target"
-            with self.assertRaises(self.helper.WorkflowError):
-                self.helper.track(PR_URL, api_url=base)
-            self.assertTrue(
-                all(
-                    urlparse(row[1]).path == "/api/pending-prs"
-                    for row in state["requests"]
+        for flag, writes in (("read_redirect_to", 0), ("redirect_to", 1)):
+            with self.subTest(flag=flag), queue_api() as (base, state):
+                state[flag] = base + "/unexpected-target"
+                with self.assertRaises(self.helper.WorkflowError):
+                    self.helper.track(PR_URL, api_url=base)
+                self.assertTrue(
+                    all(
+                        urlparse(row[1]).path == "/api/pending-prs"
+                        for row in state["requests"]
+                    )
                 )
-            )
-            self.assertEqual(
-                len([row for row in state["requests"] if row[0] == "POST"]), 1
-            )
+                self.assertEqual(
+                    len([row for row in state["requests"] if row[0] == "POST"]), writes
+                )
 
     def test_token_file_permissions_and_environment_precedence(self) -> None:
         import tempfile
@@ -230,7 +246,7 @@ class TrackPRTests(unittest.TestCase):
                 if os.name != "nt":
                     with self.assertRaises(self.helper.WorkflowError):
                         self.helper.track(PR_URL, api_url=base)
-                    self.assertFalse(any(row[0] == "POST" for row in state["requests"]))
+                    self.assertEqual(state["requests"], [])
                 token_path.chmod(0o600)
                 self.assertFalse(
                     self.helper.track(PR_URL, api_url=base)["already_tracked"]
