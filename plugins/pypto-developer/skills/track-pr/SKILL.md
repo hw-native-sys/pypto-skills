@@ -32,8 +32,12 @@ blindly retry an uncertain write or substitute another user's credentials.
 Reads and writes use the taskboard user's personal API token, in this order:
 `PYPTO_TASK_API_TOKEN`, `PYPTO_TASK_API_TOKEN_FILE`, or
 `~/.config/pypto-taskboard/token`. Token files must be mode `600` on Unix.
-The initial lookup, existing-entry checks, and post-write confirmation all
-require this token, even when no write is needed.
+Send `Authorization: Bearer <token>` on every API request, including
+`GET /api/pending-prs?project=...`. List queries are authenticated, not public:
+the initial lookup, existing-entry checks, and post-write confirmation all
+require this token, even when no write is needed. A login-required response
+does not prove that the local token is missing; check token discovery and
+whether the lookup sends the authorization header before reporting that cause.
 Do not print credentials, copy them into commands, or place them in PR/task
 content. No GitHub credentials or authenticated GitHub operations are needed.
 Only the canonical taskboard HTTPS origin or an explicitly selected HTTP
