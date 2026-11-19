@@ -56,6 +56,27 @@ gh api "repos/$PR_REPO/pulls/$PR_NUMBER" | jq '.head.ref'
 
 If the API call fails, handle its nonzero exit status before parsing.
 
+## Pull-request head filters on the GitHub CLI
+
+`gh pr list --head "owner:branch"` can return an empty list even when the
+matched pull request exists and is merged (observed with gh 2.103.2). Never
+infer "no pull request" from that CLI form. Query the host-pinned REST endpoint
+and aggregate pages separately:
+
+```text
+gh api --hostname "$GITHUB_HOST" --method GET "repos/$PR_REPO/pulls" \
+  -f state=closed -f "head=$HEAD_OWNER:$BRANCH_NAME" \
+  -f per_page=100 --paginate --slurp
+```
+
+`HEAD_OWNER` is the fork owner carried by the head prefix, or the
+base-repository owner when the prefix is empty. GitHub ignores an unqualified
+`head` filter and returns every closed pull request.
+
+Filter `merged_at` only after aggregating the pages with `jq 'add'`; never
+combine `--slurp` with `--jq`. Treat any nonzero status as a lookup failure,
+not as an empty result.
+
 ## Pagination
 
 REST list endpoints and every GraphQL connection are paginated. Use
